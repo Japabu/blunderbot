@@ -60,6 +60,10 @@ export function stopWatching() {
     try { ws?.close(); } catch (ignored) { }
 }
 
+export function getCurrentPlayerName() {
+    return currentPlayerName;
+}
+
 function connectToGame(gameId, blunderCallback) {
     console.log("connecting to game: " + gameId);
 

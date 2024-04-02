@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createAudioResource, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
-import { watchPlayerBlunders } from './li.mjs';
+import { getCurrentPlayerName, stopWatching, watchPlayerBlunders } from './li.mjs';
 
 process.on('unhandledRejection', error => {
 	console.error('Unhandled promise rejection:', error);
@@ -20,6 +20,9 @@ const commands = [
 			.setDescription("Lichess username")
 			.setRequired(true)
 		),
+	new SlashCommandBuilder()
+		.setName('stop')
+		.setDescription('Stops stalking a lichess user')
 ];
 
 const rest = new REST().setToken(process.env.TOKEN);
@@ -74,6 +77,10 @@ client.on(Events.InteractionCreate, async interaction => {
 			player.play(blunderSound());
 		});
 		await interaction.reply("Spectating lichess player: " + username);
+	} else if (interaction.commandName === "stop") {
+		await interaction.reply("Stopped spectating lichess player: " + getCurrentPlayerName());
+		stopWatching();
+		message.guild.me.voice.channel.leave();
 	}
 });
 
