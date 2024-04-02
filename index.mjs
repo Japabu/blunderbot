@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createAudioResource, joinVoiceChannel } from '@discordjs/voice';
+import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createAudioResource, getVoiceConnection, getVoiceConnections, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { getCurrentPlayerName, stopWatching, watchPlayerBlunders } from './li.mjs';
 
@@ -80,7 +80,7 @@ client.on(Events.InteractionCreate, async interaction => {
 	} else if (interaction.commandName === "stop") {
 		await interaction.reply("Stopped spectating lichess player: " + getCurrentPlayerName());
 		stopWatching();
-		interaction.guild.me.voice.channel.leave();
+		getVoiceConnection(interaction.guildId).destroy();
 	}
 });
 
