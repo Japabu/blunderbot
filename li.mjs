@@ -1,8 +1,6 @@
 import WebSocket from 'ws';
 import sf from "./sf.mjs";
 
-const BLUNDER_DELTA = -150;
-
 function makeSri() {
     const length = 12;
     let result = '';
@@ -25,7 +23,7 @@ let prevBlackScore = 0;
 let interval = null;
 let ws = null;
 
-export async function watchPlayerBlunders(playerName, blunderCallback) {
+export async function watchPlayerBlunders(playerName, moveDeltaCallback) {
     if (currentPlayerName === playerName) return;
 
     console.log("watching player: " + playerName);
@@ -45,7 +43,7 @@ export async function watchPlayerBlunders(playerName, blunderCallback) {
 
             if (!ws || ws.readyState === WebSocket.CLOSED) {
                 currentGameId = gameId;
-                if (gameId) connectToGame(gameId, blunderCallback);
+                if (gameId) connectToGame(gameId, moveDeltaCallback);
             }
 
             if (ws?.readyState === WebSocket.OPEN) {
@@ -64,7 +62,7 @@ export function getCurrentPlayerName() {
     return currentPlayerName;
 }
 
-function connectToGame(gameId, blunderCallback) {
+function connectToGame(gameId, moveDeltaCallback) {
     console.log("connecting to game: " + gameId);
 
     prevWhiteScore = 0;
@@ -109,11 +107,7 @@ function connectToGame(gameId, blunderCallback) {
         }
 
         const moveDelta = newScore - oldScore;
-
         console.log(`Player ${lastTurn} moved, delta: ${moveDelta}`);
-
-        if (moveDelta <= BLUNDER_DELTA) {
-            blunderCallback();
-        }
+        moveDeltaCallback(moveDelta);
     });
 }

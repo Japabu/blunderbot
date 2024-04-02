@@ -2,7 +2,12 @@ import 'dotenv/config';
 
 import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createAudioResource, getVoiceConnection, getVoiceConnections, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
-import { getCurrentPlayerName, stopWatching, watchPlayerBlunders } from './li.mjs';
+import { getCurrentPlayerName, stopWatching, watchPlayerBlunders as watchPlayerMoves } from './li.mjs';
+
+const BLUNDER_DELTA = -300;
+const MISTAKE_DELTA = -150;
+const OK_DELTA = 150;
+const GOOD_DELTA = 300;
 
 process.on('unhandledRejection', error => {
 	console.error('Unhandled promise rejection:', error);
@@ -46,6 +51,9 @@ client.on(Events.ClientReady, () => {
 
 
 const blunderSound = () => createAudioResource('./sounds/blunder.mp3');
+const mistakeSound = () => createAudioResource('./sounds/mistake.mp3');
+const goodSound = () => createAudioResource('./sounds/good.mp3');
+const okSound = () => createAudioResource('./sounds/ok.mp3');
 
 const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
 
@@ -73,8 +81,20 @@ client.on(Events.InteractionCreate, async interaction => {
 		});
 
 		connection.subscribe(player);
-		watchPlayerBlunders(username, () => {
-			player.play(blunderSound());
+		watchPlayerMoves(username, moveDelta => {
+			if (moveDelta < 0) {
+				if (moveDelta <= BLUNDER_DELTA) {
+					player.play(blunderSound());
+				} else if (moveDelta <= MISTAKE_DELTA) {
+					player.play(mistakeSound());
+				}
+			} else {
+				if (moveDelta >= GOOD_DELTA) {
+					player.play(goodSound());
+				} else if(moveDelta >= OK_DELTA) {
+					player.play(okSound());
+				}
+			}
 		});
 		await interaction.reply("Spectating lichess player: " + username);
 	} else if (interaction.commandName === "stop") {
