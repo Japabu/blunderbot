@@ -80,7 +80,7 @@ client.on(Events.InteractionCreate, async interaction => {
 	} else if (interaction.commandName === "stop") {
 		await interaction.reply("Stopped spectating lichess player: " + getCurrentPlayerName());
 		stopWatching();
-		message.guild.me.voice.channel.leave();
+		interaction.guild.me.voice.channel.leave();
 	}
 });
 
