@@ -1,5 +1,38 @@
 import WebSocket from 'ws';
+import ndjsonStream from 'can-ndjson-stream';
+
 import sf from "./sf.mjs";
+
+
+async function fetchFirstLineAndDisconnect(url) {
+    const response = await fetch(url);
+    const exampleStream = ndjsonStream(response.body);
+    const reader = exampleStream.getReader();
+    const result = await reader.read();
+
+    if (result.done) {
+        throw new Error("First line could not be read as stream is already done!");
+    }
+
+    return result.value;
+};
+
+async function getPlayerColor(gameId, playerName) {
+    if (!gameId) throw new Error("gameId is required!");
+    if (!playerName) throw new Error("playerName is required!");
+
+    playerName = playerName.toLowerCase();
+
+    const response = await fetchFirstLineAndDisconnect("https://lichess.org/api/stream/game/" + gameId);
+
+    const whitePlayerName = response?.players?.white?.user?.name?.toLowerCase();
+    const blackPlayerName = response?.players?.black?.user?.name?.toLowerCase();
+
+    if (playerName === whitePlayerName) return "w";
+    else if (playerName === blackPlayerName) return "b";
+    else throw new Error('Player not found');
+};
+
 
 function makeSri() {
     const length = 12;
@@ -17,6 +50,7 @@ function makeSri() {
 
 let currentPlayerName = null;
 let currentGameId = null;
+let currentPlayerColor = null;
 let prevWhiteScore = 0;
 let prevBlackScore = 0;
 
@@ -37,13 +71,17 @@ export async function watchPlayerBlunders(playerName, moveDeltaCallback) {
             const body = await response.json();
             const gameId = body?.[0]?.playingId ?? null;
 
+            if (!gameId) return;
+
             if (gameId !== currentGameId) {
                 try { ws?.close(); } catch (ignored) { }
             }
 
             if (!ws || ws.readyState === WebSocket.CLOSED) {
                 currentGameId = gameId;
-                if (gameId) connectToGame(gameId, moveDeltaCallback);
+                currentPlayerColor = await getPlayerColor(gameId, playerName);
+                console.log("player color:", currentPlayerColor);
+                connectToGame(gameId, moveDeltaCallback);
             }
 
             if (ws?.readyState === WebSocket.OPEN) {
@@ -81,19 +119,23 @@ function connectToGame(gameId, moveDeltaCallback) {
         const body = JSON.parse(data);
         if (!body) return;
 
+        // console.log("MESSAGE:", body);
+
         const messageType = body.t;
         if (messageType !== "move") return;
-        // console.log("message: %s", data);
 
         let fen = body.d?.fen;
 
         const ply = body.d?.ply;
+
+        // turn = opponent
+        // lastTurn = me
         const turn = ply % 2 === 0 ? "w" : "b";
         const lastTurn = ply % 2 !== 0 ? "w" : "b";
 
+        if (lastTurn !== currentPlayerColor) return;
+
         // Score the last move by calculating the score for the next best move for the opponent
-        // turn = opponent
-        // lastTurn = me
         fen += " " + turn;
 
         const newScore = -(await sf.getScore(fen));
