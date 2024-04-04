@@ -4,10 +4,17 @@ import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createA
 import { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { getCurrentPlayerName, stopWatching, watchPlayerBlunders as watchPlayerMoves } from './li.mjs';
 
-const BLUNDER_DELTA = -300;
-const MISTAKE_DELTA = -150;
-const OK_DELTA = 150;
-const GOOD_DELTA = 300;
+const BAD_SOUND_EFFECTS = [
+	["wet_fart", -300],
+	["oof", -150],
+	["bruh", -100],
+	["minecraft_damage", -50],
+]
+
+const GOOD_SOUND_EFFECTS = [
+	["airhorn", 300],
+	["price", 150],
+]
 
 process.on('unhandledRejection', error => {
 	console.error('Unhandled promise rejection:', error);
@@ -50,11 +57,7 @@ client.on(Events.ClientReady, () => {
 });
 
 
-const blunderSound = () => createAudioResource('./sounds/blunder.mp3');
-const mistakeSound = () => createAudioResource('./sounds/mistake.mp3');
-const goodSound = () => createAudioResource('./sounds/good.mp3');
-const okSound = () => createAudioResource('./sounds/ok.mp3');
-
+const loadSound = (name) => createAudioResource(`./sounds/${name}.mp3`);
 const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
 
 player.on('error', error => {
@@ -82,19 +85,14 @@ client.on(Events.InteractionCreate, async interaction => {
 
 		connection.subscribe(player);
 		watchPlayerMoves(username, moveDelta => {
+			let soundName;
 			if (moveDelta < 0) {
-				if (moveDelta <= BLUNDER_DELTA) {
-					player.play(blunderSound());
-				} else if (moveDelta <= MISTAKE_DELTA) {
-					player.play(mistakeSound());
-				}
-			} else {
-				if (moveDelta >= GOOD_DELTA) {
-					player.play(goodSound());
-				} else if(moveDelta >= OK_DELTA) {
-					player.play(okSound());
-				}
-			}
+                soundName = BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
+            } else {
+                soundName = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
+            }
+
+			if (soundName) player.play(loadSound(soundName));
 		});
 		await interaction.reply("Spectating lichess player: " + username);
 	} else if (interaction.commandName === "stop") {
