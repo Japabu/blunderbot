@@ -1,6 +1,6 @@
 async function getScore(fen) {
     const params = new URLSearchParams();
-    params.set("time", 10);
+    params.set("depth", 8);
     params.set("fen", fen);
     const url = process.env.STOCKFISH_SERVER_URL + "?" + params.toString();
     // console.log("Making request:", url);
