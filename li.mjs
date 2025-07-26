@@ -1,21 +1,7 @@
 import WebSocket from 'ws';
-import ndjsonStream from 'can-ndjson-stream';
 
 import sf from "./sf.mjs";
 
-
-async function fetchFirstLineAndDisconnect(url) {
-    const response = await fetch(url);
-    const exampleStream = ndjsonStream(response.body);
-    const reader = exampleStream.getReader();
-    const result = await reader.read();
-
-    if (result.done) {
-        throw new Error("First line could not be read as stream is already done!");
-    }
-
-    return result.value;
-};
 
 async function getPlayerColor(gameId, playerName) {
     if (!gameId) throw new Error("gameId is required!");
@@ -23,14 +9,22 @@ async function getPlayerColor(gameId, playerName) {
 
     playerName = playerName.toLowerCase();
 
-    const response = await fetchFirstLineAndDisconnect("https://lichess.org/api/stream/game/" + gameId);
+    const response = await fetch(`https://lichess.org/game/export/${gameId}?moves=false&pgnInJson=false&tags=false&clocks=false&evals=false&opening=false&division=false`, {
+        headers: { 'Accept': 'application/json' }
+    });
 
-    const whitePlayerName = response?.players?.white?.user?.name?.toLowerCase();
-    const blackPlayerName = response?.players?.black?.user?.name?.toLowerCase();
+    if (!response.ok) {
+        throw new Error(`Failed to fetch game: ${response.status}`);
+    }
+
+    const game = await response.json();
+
+    const whitePlayerName = game?.players?.white?.user?.name?.toLowerCase();
+    const blackPlayerName = game?.players?.black?.user?.name?.toLowerCase();
 
     if (playerName === whitePlayerName) return "w";
     else if (playerName === blackPlayerName) return "b";
-    else throw new Error('Player not found', response);
+    else throw new Error('Player not found in game');
 };
 
 
