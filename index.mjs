@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createAudioResource, getVoiceConnection, getVoiceConnections, joinVoiceChannel } from '@discordjs/voice';
+import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { getCurrentPlayerName, searchPlayers, stopWatching, watchPlayerBlunders as watchPlayerMoves } from './li.mjs';
 
