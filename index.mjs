@@ -2,7 +2,7 @@ import 'dotenv/config';
 
 import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createAudioResource, getVoiceConnection, getVoiceConnections, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
-import { getCurrentPlayerName, stopWatching, watchPlayerBlunders as watchPlayerMoves } from './li.mjs';
+import { getCurrentPlayerName, searchPlayers, stopWatching, watchPlayerBlunders as watchPlayerMoves } from './li.mjs';
 
 const BAD_SOUND_EFFECTS = [
 	["wet_fart", -300],
@@ -31,6 +31,7 @@ const commands = [
 			.setName("username")
 			.setDescription("Lichess username")
 			.setRequired(true)
+			.setAutocomplete(true)
 		),
 	new SlashCommandBuilder()
 		.setName('stop')
@@ -65,6 +66,22 @@ player.on('error', error => {
 });
 
 client.on(Events.InteractionCreate, async interaction => {
+	if (interaction.isAutocomplete()) {
+		if (interaction.commandName === 'lichess') {
+			const focusedValue = interaction.options.getFocused();
+			const usernames = await searchPlayers(focusedValue);
+
+			// Convert to Discord autocomplete format
+			const choices = usernames.map(username => ({
+				name: username,
+				value: username
+			}));
+
+			await interaction.respond(choices);
+		}
+		return;
+	}
+
 	if (!interaction.isChatInputCommand()) return;
 
 	if (interaction.commandName === "ping") {
@@ -87,10 +104,10 @@ client.on(Events.InteractionCreate, async interaction => {
 		watchPlayerMoves(username, moveDelta => {
 			let soundName;
 			if (moveDelta < 0) {
-                soundName = BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
-            } else {
-                soundName = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
-            }
+				soundName = BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
+			} else {
+				soundName = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
+			}
 
 			if (soundName) player.play(loadSound(soundName));
 		});

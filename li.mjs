@@ -30,7 +30,7 @@ async function getPlayerColor(gameId, playerName) {
 
     if (playerName === whitePlayerName) return "w";
     else if (playerName === blackPlayerName) return "b";
-    else throw new Error('Player not found');
+    else throw new Error('Player not found', response);
 };
 
 
@@ -98,6 +98,24 @@ export function stopWatching() {
 
 export function getCurrentPlayerName() {
     return currentPlayerName;
+}
+
+export async function searchPlayers(term) {
+    if (!term || term.length < 3) {
+        return [];
+    }
+
+    try {
+        const response = await fetch(`https://lichess.org/api/player/autocomplete?term=${encodeURIComponent(term)}&names=true`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const usernames = await response.json();
+        return usernames.slice(0, 25); // Limit to Discord's 25 choice maximum
+    } catch (error) {
+        console.error('Lichess player search error:', error);
+        return [];
+    }
 }
 
 function connectToGame(gameId, moveDeltaCallback) {
