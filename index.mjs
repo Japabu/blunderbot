@@ -1,8 +1,11 @@
 import 'dotenv/config';
 
+import { existsSync } from 'node:fs';
+
 import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
-import { getCurrentPlayerName, searchPlayers, stopWatching, watchPlayerBlunders as watchPlayerMoves } from './li.mjs';
+import { formatReport } from './cheat.mjs';
+import { getCurrentPlayerName, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
 
 const BAD_SOUND_EFFECTS = [
 	["wet_fart", -300],
@@ -101,15 +104,27 @@ client.on(Events.InteractionCreate, async interaction => {
 		});
 
 		connection.subscribe(player);
-		watchPlayerMoves(username, moveDelta => {
-			let soundName;
-			if (moveDelta < 0) {
-				soundName = BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
-			} else {
-				soundName = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
-			}
+		const channel = interaction.channel;
+		const say = content => channel?.send(content).catch(error => console.error('Send error:', error));
+		watchPlayer(username, {
+			onMoveDelta: moveDelta => {
+				let soundName;
+				if (moveDelta < 0) {
+					soundName = BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
+				} else {
+					soundName = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
+				}
 
-			if (soundName) player.play(loadSound(soundName));
+				if (soundName) player.play(loadSound(soundName));
+			},
+			onGameStart: opponent => {
+				if (opponent.account?.tosViolation) say(`🚨 Heads up: **${opponent.name}** is marked by Lichess for ToS violation`);
+			},
+			onCheatAlert: (opponent, summary) => {
+				if (existsSync('./sounds/sus.mp3')) player.play(loadSound('sus'));
+				say(formatReport(opponent, summary));
+			},
+			onGameEnd: (opponent, summary) => say(formatReport(opponent, summary)),
 		});
 		await interaction.reply("Spectating lichess player: " + username);
 	} else if (interaction.commandName === "stop") {

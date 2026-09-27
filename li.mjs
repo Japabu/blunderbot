@@ -1,9 +1,10 @@
 import WebSocket from 'ws';
 
+import { CheatDetector, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
 
 
-async function getPlayerColor(gameId, playerName) {
+async function getGameInfo(gameId, playerName) {
     if (!gameId) throw new Error("gameId is required!");
     if (!playerName) throw new Error("playerName is required!");
 
@@ -19,11 +20,11 @@ async function getPlayerColor(gameId, playerName) {
 
     const game = await response.json();
 
-    const whitePlayerName = game?.players?.white?.user?.name?.toLowerCase();
-    const blackPlayerName = game?.players?.black?.user?.name?.toLowerCase();
+    const { white, black } = game?.players ?? {};
+    const opponentOf = side => ({ name: side?.user?.name ?? "anonymous", rating: side?.rating });
 
-    if (playerName === whitePlayerName) return "w";
-    else if (playerName === blackPlayerName) return "b";
+    if (playerName === white?.user?.name?.toLowerCase()) return { color: "w", opponent: opponentOf(black) };
+    else if (playerName === black?.user?.name?.toLowerCase()) return { color: "b", opponent: opponentOf(white) };
     else throw new Error('Player not found in game');
 };
 
@@ -45,13 +46,21 @@ function makeSri() {
 let currentPlayerName = null;
 let currentGameId = null;
 let currentPlayerColor = null;
-let prevWhiteScore = 0;
-let prevBlackScore = 0;
+let prevMyScore = 0;
+let prevPosition = null; // { ply, score, bestmove } of the last evaluated position, side-to-move POV
+let cheat = null;
+let callbacks = {};
+
+// stockfish-server interrupts the running search when a new request arrives, so evaluate one position at a time
+let evalQueue = Promise.resolve();
+const evaluate = fen => (evalQueue = evalQueue.catch(() => { }).then(() => sf.evaluate(fen)));
 
 let interval = null;
 let ws = null;
 
-export async function watchPlayerBlunders(playerName, moveDeltaCallback) {
+// callbacks: onMoveDelta(delta), onGameStart(opponent), onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
+export async function watchPlayer(playerName, newCallbacks) {
+    callbacks = newCallbacks;
     if (currentPlayerName === playerName) return;
 
     console.log("watching player: " + playerName);
@@ -72,10 +81,18 @@ export async function watchPlayerBlunders(playerName, moveDeltaCallback) {
             }
 
             if (!ws || ws.readyState === WebSocket.CLOSED) {
+                if (gameId !== currentGameId) finishGame();
                 currentGameId = gameId;
-                currentPlayerColor = await getPlayerColor(gameId, playerName);
-                console.log("player color:", currentPlayerColor);
-                connectToGame(gameId, moveDeltaCallback);
+                const { color, opponent } = await getGameInfo(gameId, currentPlayerName);
+                currentPlayerColor = color;
+                console.log("player color:", currentPlayerColor, "opponent:", opponent.name);
+                if (!cheat || cheat.gameId !== gameId) {
+                    opponent.account = opponent.name === "anonymous" ? null : await fetchAccount(opponent.name);
+                    cheat = new CheatDetector(opponent);
+                    cheat.gameId = gameId;
+                    callbacks.onGameStart?.(opponent);
+                }
+                connectToGame(gameId);
             }
 
             if (ws?.readyState === WebSocket.OPEN) {
@@ -85,7 +102,14 @@ export async function watchPlayerBlunders(playerName, moveDeltaCallback) {
     }
 }
 
+function finishGame() {
+    if (!cheat || cheat.finished) return;
+    cheat.finished = true;
+    callbacks.onGameEnd?.(cheat.opponent, cheat.summary());
+}
+
 export function stopWatching() {
+    finishGame();
     currentPlayerName = null;
     try { ws?.close(); } catch (ignored) { }
 }
@@ -112,11 +136,11 @@ export async function searchPlayers(term) {
     }
 }
 
-function connectToGame(gameId, moveDeltaCallback) {
+function connectToGame(gameId) {
     console.log("connecting to game: " + gameId);
 
-    prevWhiteScore = 0;
-    prevBlackScore = 0;
+    prevMyScore = 0;
+    prevPosition = null;
 
     const sri = makeSri();
     ws = new WebSocket(`wss://socket5.lichess.org/watch/${gameId}/white/v6?sri=${sri}`, {
@@ -134,34 +158,34 @@ function connectToGame(gameId, moveDeltaCallback) {
         // console.log("MESSAGE:", body);
 
         const messageType = body.t;
+        if (messageType === "endData" || messageType === "end") {
+            finishGame();
+            return;
+        }
         if (messageType !== "move") return;
 
-        let fen = body.d?.fen;
+        const { fen, ply, uci } = body.d ?? {};
 
-        const ply = body.d?.ply;
-
-        // turn = opponent
-        // lastTurn = me
+        // turn = side to move now, lastTurn = side that just moved
         const turn = ply % 2 === 0 ? "w" : "b";
         const lastTurn = ply % 2 !== 0 ? "w" : "b";
 
-        if (lastTurn !== currentPlayerColor) return;
+        // Evaluate every position: the score scores the move just played, the best move judges the next one
+        const { score, bestmove } = await evaluate(fen + " " + turn);
+        if (gameId !== currentGameId) return;
 
-        // Score the last move by calculating the score for the next best move for the opponent
-        fen += " " + turn;
+        const moverScore = -score;
+        const before = prevPosition;
+        prevPosition = { ply, score, bestmove };
 
-        const newScore = -(await sf.getScore(fen));
-        let oldScore;
-        if (lastTurn === "w") {
-            oldScore = prevWhiteScore;
-            prevWhiteScore = newScore;
-        } else {
-            oldScore = prevBlackScore;
-            prevBlackScore = newScore;
+        if (lastTurn === currentPlayerColor) {
+            const moveDelta = moverScore - prevMyScore;
+            prevMyScore = moverScore;
+            console.log(`Player ${lastTurn} moved, delta: ${moveDelta}`);
+            callbacks.onMoveDelta?.(moveDelta);
+        } else if (before?.ply === ply - 1 && cheat && !cheat.finished) {
+            cheat.record({ ply, uci, before: before.score, bestmove: before.bestmove, after: moverScore });
+            if (cheat.shouldAlert()) callbacks.onCheatAlert?.(cheat.opponent, cheat.summary());
         }
-
-        const moveDelta = newScore - oldScore;
-        console.log(`Player ${lastTurn} moved, delta: ${moveDelta}`);
-        moveDeltaCallback(moveDelta);
     });
 }
