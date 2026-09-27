@@ -1,8 +1,9 @@
 import 'dotenv/config';
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { Readable } from 'node:stream';
 
-import { AudioPlayerStatus, NoSubscriberBehavior, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
+import { AudioPlayerStatus, NoSubscriberBehavior, StreamType, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { formatReport } from './cheat.mjs';
 import { getCurrentPlayerName, moveReceivedAt, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
@@ -83,7 +84,7 @@ client.on(Events.ClientReady, () => {
 
 const SOUND_POOLS = Object.fromEntries(readdirSync('./sounds', { withFileTypes: true })
 	.filter(entry => entry.isDirectory())
-	.map(entry => [entry.name, readdirSync(`./sounds/${entry.name}`).filter(file => file.endsWith('.mp3'))]));
+	.map(entry => [entry.name, readdirSync(`./sounds/${entry.name}`).filter(file => file.endsWith('.ogg'))]));
 const lastPlayed = {};
 let nowPlaying = null;
 // Profiling: what was last handed to the player, and when (performance.now() ms)
@@ -107,6 +108,10 @@ function play(slot) {
 // Dmitri Komarov's move- and square-specific lines (from the dmitlichess extension) for moves that got no
 // meme sound. He never talks over another sound.
 const KOMAROV = JSON.parse(readFileSync('./commentary/komarov/meta.json', 'utf8'));
+
+for (const [slot, clips] of Object.entries(SOUND_POOLS)) for (const clip of clips) clipCache.set(`./sounds/${slot}/${clip}`, readFileSync(`./sounds/${slot}/${clip}`));
+for (const clips of Object.values(KOMAROV)) for (const clip of clips) clipCache.set(`./commentary/komarov/${clip}`, readFileSync(`./commentary/komarov/${clip}`));
+console.log(`Loaded ${clipCache.size} clips (${Math.round([...clipCache.values()].reduce((sum, clip) => sum + clip.length, 0) / 1048576)} MB)`);
 
 function komarovKey(san) {
 	const move = san.replace(/[+#]/g, '').replace(/=[QRBN]/, '');
@@ -155,9 +160,14 @@ player.on(AudioPlayerStatus.Playing, () => {
 	pending = null;
 });
 
+// Every clip is Ogg Opus, what Discord streams anyway, and kept in memory: that way playback needs no ffmpeg
+// and no SD card read, which took 300-800 ms per sound on the Pi
+const clipCache = new Map();
+
 function startPlaying(name, path) {
 	pending = { name, at: performance.now(), moveAt: moveReceivedAt() };
-	player.play(createAudioResource(path));
+	if (!clipCache.has(path)) clipCache.set(path, readFileSync(path));
+	player.play(createAudioResource(Readable.from([clipCache.get(path)]), { inputType: StreamType.OggOpus }));
 }
 
 // The watched player and voice channel survive restarts (every deploy restarts the container)
@@ -212,10 +222,15 @@ function startSpectating(guild, channelId, username) {
 		onMove: () => {
 			if (WAITING_SLOTS.has(nowPlaying)) player.stop();
 		},
+		// Right away: the board-only sound (capture, fork, mate, ...) or Komarov announcing the move
+		onMoveInstant: ({ san, flavor }) => {
+			if (flavor) play(flavor);
+			else commentary(san);
+		},
+		// Once the engine is done: only cut in if the verdict is something other than what's already playing
 		onMoveDelta: (moveDelta, info) => {
 			const slot = moveSound(moveDelta, info);
-			if (slot) play(slot);
-			else commentary(info.san);
+			if (slot && slot !== info.flavor) play(slot);
 		},
 		onCommentary: commentary,
 		// Moments are named after their sound slot

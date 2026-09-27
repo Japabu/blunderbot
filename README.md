@@ -15,7 +15,9 @@ BlunderBot is a Discord bot that watches your Lichess games and provides **compl
 
 ## Sound Effect Tier List
 
-Every slot is a folder in `sounds/` and a random clip from it plays (never the same one twice in a row), so drop more mp3s in to add variety.
+Every slot is a folder in `sounds/` and a random clip from it plays (never the same one twice in a row), so drop more clips in to add variety. Clips are Ogg Opus, the format Discord streams, and preloaded into memory, so a sound starts within milliseconds instead of waiting for ffmpeg: convert with `npx ffmpeg-static` or any ffmpeg, e.g. `ffmpeg -i clip.mp3 -af loudnorm=I=-12 -c:a libopus -b:a 96k -ar 48000 -ac 2 clip.ogg`.
+
+Anything that can be read off the board (captures, forks, en passant, checkmate, ...) or Komarov announcing the move plays the instant a move arrives. The engine's verdict comes a few hundred milliseconds later and only cuts in when it has something better to say, like a blunder.
 
 ### When You Make a Good Move:
 - 💰 **good_move** (+150): Price is Right, "Okay let's go", anime wow, Owen Wilson *wow*
@@ -32,7 +34,7 @@ Every slot is a folder in `sounds/` and a random clip from it plays (never the s
 - 😩 **threw_win**: you were clearly winning (+5) and now you're not: faah, Curb Your Enthusiasm
 
 ### Special Moments:
-- 🔔 **game_start**: Boxing bell
+- 🔔 **game_start**: Boxing bell, as soon as the bot finds the new game
 - 🌸 **en_passant**: Anime ahh (by anyone, because it's always an event)
 - 🍄 **promotion**: Mario power-up, and 🏃 **knight_promotion** (anyone): *why are you running?*
 - ✋ **check_spam**: your third check in a row: *stop, stop, he's already dead*
@@ -46,7 +48,7 @@ Every slot is a folder in `sounds/` and a random clip from it plays (never the s
 ### Captures (no engine needed, and they beat the good/bad move sound unless it's a real blunder):
 - 🩸 **first_blood**: first capture of the game
 - ⚔️ **double_kill** / **triple_kill** / **quadra_kill** / **penta_kill**: you capture on 2, 3, 4, 5 moves in a row, and 😈 **opponent_double_kill** when they do it twice
-- 🎯 **headshot**: something takes a piece worth way more than itself (pawn takes queen, knight takes rook)
+- 🎯 **headshot**: a bishop, rook or queen snipes something from 5+ squares away
 - 😭 **lost_queen**: they take your queen: *NOOOOO*, and 👋 **queen_trade**: *bye, have a great time* / sayonara
 - 🚪 **king_capture**: the king takes something: *I am the one who knocks*
 - 💀 **bloodbath**: four captures in a row: *FATALITY*
@@ -99,7 +101,7 @@ Every slot is a folder in `sounds/` and a random clip from it plays (never the s
 
 ## Dmitri Komarov Commentary
 
-Every move that doesn't get a meme sound (yours and your opponent's) gets GM Dmitri Komarov announcing it instead: *"Knight c3!"*, captures by their square, castling, checks, plus his lines for draws and your opponent resigning. Only his move- and square-specific lines are used, never the random filler, and he never talks over another sound. The ~1400 clips come from Vincent Simard's [dmitlichess](https://github.com/vincentsimard/dmitlichess) extension (WTFPL), levelled a bit quieter than the memes, in `commentary/komarov/`.
+Every move that doesn't get a meme sound (yours and your opponent's) gets GM Dmitri Komarov announcing it instead: *"Knight c3!"*, captures by their square, castling, checks, plus his lines for draws and your opponent resigning. Only his move- and square-specific lines are used, never the random filler, and he never talks over another sound. The ~1400 clips come from Vincent Simard's [dmitlichess](https://github.com/vincentsimard/dmitlichess) extension (WTFPL), levelled a bit quieter than the memes, in `commentary/komarov/`. When the bot joins a game that's already running, the moves Lichess replays on connect stay silent.
 
 ## Cheater Detection (Is Your Opponent Suspiciously Good?)
 

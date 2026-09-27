@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 
-import { captureInfo, fullFen, isEnPassant, isKnightFork, isUpset, pieceCount } from "./board.mjs";
+import { captureInfo, fullFen, isEnPassant, isKnightFork, isSnipe, pieceCount } from "./board.mjs";
 import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
 
@@ -11,7 +11,7 @@ async function getGameInfo(gameId, playerName) {
 
     playerName = playerName.toLowerCase();
 
-    const response = await fetch(`https://lichess.org/game/export/${gameId}?moves=false&pgnInJson=false&tags=false&clocks=false&evals=false&opening=false&division=false`, {
+    const response = await fetch(`https://lichess.org/game/export/${gameId}?moves=true&pgnInJson=false&tags=false&clocks=false&evals=false&opening=false&division=false`, {
         headers: { 'Accept': 'application/json' }
     });
 
@@ -23,9 +23,10 @@ async function getGameInfo(gameId, playerName) {
 
     const { white, black } = game?.players ?? {};
     const opponentOf = side => ({ name: side?.user?.name ?? "anonymous", rating: side?.rating, speed: game.speed, clock: game.clock });
+    const plies = game.moves ? game.moves.split(" ").length : 0;
 
-    if (playerName === white?.user?.name?.toLowerCase()) return { color: "w", opponent: opponentOf(black) };
-    else if (playerName === black?.user?.name?.toLowerCase()) return { color: "b", opponent: opponentOf(white) };
+    if (playerName === white?.user?.name?.toLowerCase()) return { color: "w", opponent: opponentOf(black), plies };
+    else if (playerName === black?.user?.name?.toLowerCase()) return { color: "b", opponent: opponentOf(white), plies };
     else throw new Error('Player not found in game');
 };
 
@@ -55,6 +56,7 @@ let captureStreak = { w: 0, b: 0 }; // consecutive capturing moves per side
 let captureRun = 0;                 // consecutive plies that were all captures
 let queenTaken = null;              // { ply, white } of the last queen capture, to spot queen trades
 let scrambled = false;              // time scramble already announced this game
+let replayedUntil = 0;              // on connect Lichess replays recent moves; up to this ply they stay silent
 let waitTimer = null;
 
 // A move losing this much hands the watched player something big
@@ -83,8 +85,9 @@ let interval = null;
 let polling = false;
 let ws = null;
 
-// callbacks: onMove(), onMoveDelta(delta, { before, after, thinkTime, flavor, san }), onMoment(moment),
-// onCommentary(san or "resign"/"draw") for moves and results that got no sound of their own,
+// callbacks: onMove(), onMoveInstant({ ply, san, flavor }) as soon as a move arrives, before the engine,
+// onMoveDelta(delta, { before, after, thinkTime, flavor, san }) for the watched player once it's evaluated,
+// onMoment(moment), onCommentary("resign"/"draw") for results,
 // onGameStart(opponent), onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
 // moment: "game_start", "en_passant" (either side), "delivered_mate", "got_mated", "stalemated" (the watched
 // player stalemated the opponent), "promotion", "knight_promotion" (either side), "check_spam" (third check
@@ -126,12 +129,15 @@ async function poll() {
         if (!ws || ws.readyState === WebSocket.CLOSED) {
             if (gameId !== currentGameId) finishGame();
             const playerName = currentPlayerName;
-            const { color, opponent } = await getGameInfo(gameId, playerName);
+            const { color, opponent, plies } = await getGameInfo(gameId, playerName);
             if (playerName !== currentPlayerName) return;
             currentGameId = gameId;
             currentPlayerColor = color;
-            console.log("player color:", currentPlayerColor, "opponent:", opponent.name);
+            replayedUntil = plies;
+            console.log("player color:", currentPlayerColor, "opponent:", opponent.name, "plies so far:", plies);
             if (!cheat || cheat.gameId !== gameId) {
+                // Ring the bell as soon as the game is found, not when white gets around to the first move
+                if (plies <= 1) moment("game_start");
                 opponent.account = opponent.name === "anonymous" ? null : await fetchAccount(opponent.name);
                 cheat = new CheatDetector(opponent);
                 cheat.gameId = gameId;
@@ -247,8 +253,8 @@ async function handleMessage(gameId, body, receivedAt) {
     if (messageType !== "move") return;
 
     const { fen, ply, uci, san, clock } = body.d ?? {};
-    callbacks.onMove?.();
-    if (ply === 1) moment("game_start");
+    const replayed = ply <= replayedUntil;
+    if (!replayed) callbacks.onMove?.();
 
     // turn = side to move now, lastTurn = side that just moved
     const turn = ply % 2 === 0 ? "w" : "b";
@@ -257,7 +263,7 @@ async function handleMessage(gameId, body, receivedAt) {
 
     const initial = cheat?.opponent.clock?.initial;
     watchThinkTime(gameId, ply, turn, initial);
-    if (clock && initial >= 60 && !scrambled && clock.white < SCRAMBLE_SECONDS && clock.black < SCRAMBLE_SECONDS) {
+    if (!replayed && clock && initial >= 60 && !scrambled && clock.white < SCRAMBLE_SECONDS && clock.black < SCRAMBLE_SECONDS) {
         scrambled = true;
         moment("time_scramble");
     }
@@ -276,23 +282,7 @@ async function handleMessage(gameId, body, receivedAt) {
 
     checkStreak[lastTurn] = san?.includes("+") ? checkStreak[lastTurn] + 1 : 0;
 
-    // Evaluate every position: the score scores the move just played, the best move judges the next one
-    const { score, bestmove, startedAt, finishedAt } = await evaluate(fullFen(fen, turn, uci));
-    if (gameId !== currentGameId) return;
-    lastMoveReceivedAt = receivedAt;
-    console.log(`[timing] ply ${ply} ${lastTurn}: queued ${Math.round(startedAt - receivedAt)} ms, eval ${Math.round(finishedAt - startedAt)} ms, decided at +${Math.round(performance.now() - receivedAt)} ms`);
-
-    // Mate scores are ±1e9, clamp them so a mating sequence isn't a million-centipawn swing per move
-    const moverScore = clampScore(-score);
-    const before = prevPosition?.ply === ply - 1 ? prevPosition : null;
-    prevPosition = { ply, score, bestmove };
-
-    // No legal moves left: checkmate when the side to move is lost, otherwise stalemate. Only the game
-    // ending beats everything; the fun stuff below still loses to a real blunder (see onMoveDelta).
-    const gameOver = bestmove === "(none)" ? (score < 0 ? "mate" : "stalemate") : null;
-    const gameEnd =
-        gameOver === "mate" ? (mine ? "delivered_mate" : "got_mated") :
-        gameOver === "stalemate" && mine ? "stalemated" : null;
+    // Everything readable off the board plays right away; the engine only gets a say once it's done
     const promotion = uci?.length === 5 ? uci[4] : null;
     const moveFlavor =
         enPassant ? "en_passant" :
@@ -300,24 +290,44 @@ async function handleMessage(gameId, body, receivedAt) {
         promotion && mine ? "promotion" :
         mine && checkStreak[lastTurn] === 3 ? "check_spam" :
         flavor;
+    const mate = san?.includes("#") ? (mine ? "delivered_mate" : "got_mated") : null;
+    if (!replayed) {
+        lastMoveReceivedAt = receivedAt;
+        callbacks.onMoveInstant?.({ ply, san, flavor: mate ?? moveFlavor });
+    }
 
-    if (gameEnd) {
-        moment(gameEnd);
+    // Replayed old moves only update the board state; the newest one is still evaluated so the next move
+    // has something to compare against
+    if (replayed && ply < replayedUntil) return;
+
+    // Evaluate every position: the score scores the move just played, the best move judges the next one
+    const { score, bestmove, startedAt, finishedAt } = await evaluate(fullFen(fen, turn, uci));
+    if (gameId !== currentGameId) return;
+    console.log(`[timing] ply ${ply} ${lastTurn}: queued ${Math.round(startedAt - receivedAt)} ms, eval ${Math.round(finishedAt - startedAt)} ms, decided at +${Math.round(performance.now() - receivedAt)} ms`);
+
+    // Mate scores are ±1e9, clamp them so a mating sequence isn't a million-centipawn swing per move
+    const moverScore = clampScore(-score);
+    const before = prevPosition?.ply === ply - 1 ? prevPosition : null;
+    prevPosition = { ply, score, bestmove };
+
+    // What the engine adds on top of the instant sound: stalemate (no legal moves without check), the good/bad
+    // move verdict for the watched player, or the opponent hanging something. Checkmate was already called
+    // from the "#" in the notation.
+    const stalemate = bestmove === "(none)" && score >= 0;
+    if (replayed || mate) {
+        // Nothing to add: before our time, or the game is over anyway
+    } else if (stalemate) {
+        if (mine) moment("stalemated");
     } else if (mine && prevMyScore !== null) {
         const moveDelta = moverScore - prevMyScore;
         console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}, flavor: ${moveFlavor}`);
         callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime, flavor: moveFlavor, san });
     } else if (!mine && !moveFlavor && before && clampScore(before.score) - moverScore >= OPPONENT_BLUNDER) {
         moment("opponent_blunder");
-    } else if (moveFlavor) {
-        // Joining mid-game (or after a restart) there's no delta for the first move, so no blunder to lose to
-        moment(moveFlavor);
-    } else {
-        callbacks.onCommentary?.(san);
     }
     if (mine) prevMyScore = moverScore;
 
-    if (!mine && before && cheat && !cheat.finished) {
+    if (!replayed && !mine && before && cheat && !cheat.finished) {
         cheat.record({ ply, uci, before: before.score, bestmove: before.bestmove, after: moverScore, thinkTime, clockBefore });
         if (cheat.shouldAlert()) callbacks.onCheatAlert?.(cheat.opponent, cheat.summary());
     }
@@ -348,7 +358,7 @@ function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine) {
     if (!mine && streak >= 2) return "opponent_double_kill";
     if (isKnightFork(board, uci)) return "fork";
     if (!capture) return null;
-    if (isUpset(capture)) return "headshot";
+    if (isSnipe(uci)) return "headshot";
     if (capture.capturer === "k") return "king_capture";
     if (captureRun === 4) return "bloodbath";
     if (pieceCount(prevBoard) === 32) return "first_blood";

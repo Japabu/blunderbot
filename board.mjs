@@ -1,6 +1,5 @@
 // Helpers for the board-only FEN Lichess sends with every move ("rnbqkbnr/pppppppp/8/...")
 
-const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9 };
 const KNIGHT_JUMPS = [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]];
 
 // Piece on a square ("e4") of a FEN board, "." when empty
@@ -48,9 +47,13 @@ export function captureInfo(prevBoard, uci, enPassant) {
     return { captured: target.toLowerCase(), capturer };
 }
 
-// Taking something worth at least two pawns more than the piece that took it (the king doesn't count)
-export function isUpset({ captured, capturer }) {
-    return capturer !== "k" && PIECE_VALUES[captured] - PIECE_VALUES[capturer] >= 2;
+// A capture from across the board: at least this many squares away (only bishops, rooks and queens reach)
+const SNIPE_DISTANCE = 5;
+
+export function isSnipe(uci) {
+    const files = Math.abs(uci.charCodeAt(0) - uci.charCodeAt(2));
+    const ranks = Math.abs(uci[1] - uci[3]);
+    return Math.max(files, ranks) >= SNIPE_DISTANCE;
 }
 
 // The knight that just moved attacks the enemy king and their queen or a rook at the same time
