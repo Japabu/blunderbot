@@ -80,6 +80,10 @@ let prevMyScore = null;  // watched player's score after their previous move, nu
 let prevPosition = null; // { ply, score, bestmove } of the last evaluated position, side-to-move POV
 let prevClocks = null;   // { white, black } seconds left after the previous move
 let prevBoard = null;    // board after the previous move
+let checkStreak = { w: 0, b: 0 }; // consecutive checking moves per side
+
+// A move losing this much hands the watched player something big
+const OPPONENT_BLUNDER = 300;
 let cheat = null;
 let callbacks = {};
 
@@ -93,7 +97,10 @@ let ws = null;
 
 // callbacks: onMoveDelta(delta, { before, after }), onMoment(moment), onGameStart(opponent),
 // onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
-// moment: "en_passant" (either side), "delivered_mate", "got_mated", "stalemated" (the watched player stalemated the opponent)
+// moment: "game_start", "en_passant" (either side), "delivered_mate", "got_mated", "stalemated" (the watched
+// player stalemated the opponent), "promotion", "knight_promotion" (either side), "check_spam" (third check
+// in a row by the watched player), "opponent_blunder", "win_on_time"
+// onMoveDelta's info: before/after are the watched player's eval around the move, thinkTime in seconds or null
 export async function watchPlayer(playerName, newCallbacks) {
     callbacks = newCallbacks;
     if (currentPlayerName?.toLowerCase() === playerName.toLowerCase()) return;
@@ -197,6 +204,7 @@ function connectToGame(gameId) {
     prevPosition = null;
     prevClocks = null;
     prevBoard = null;
+    checkStreak = { w: 0, b: 0 };
 
     const sri = makeSri();
     ws = new WebSocket(`wss://socket5.lichess.org/watch/${gameId}/white/v6?sri=${sri}`, {
@@ -223,12 +231,16 @@ async function handleMessage(gameId, body) {
 
     const messageType = body.t;
     if (messageType === "endData" || messageType === "end") {
+        const { winner, status } = body.d ?? {};
+        const myColor = currentPlayerColor === "w" ? "white" : "black";
+        if (status?.name === "outoftime" && winner === myColor && cheat && !cheat.finished) moment("win_on_time");
         finishGame();
         return;
     }
     if (messageType !== "move") return;
 
-    const { fen, ply, uci, clock } = body.d ?? {};
+    const { fen, ply, uci, san, clock } = body.d ?? {};
+    if (ply === 1) moment("game_start");
 
     // turn = side to move now, lastTurn = side that just moved
     const turn = ply % 2 === 0 ? "w" : "b";
@@ -244,6 +256,8 @@ async function handleMessage(gameId, body) {
     const enPassant = isEnPassant(prevBoard, fen, uci);
     prevBoard = fen;
 
+    checkStreak[lastTurn] = san?.includes("+") ? checkStreak[lastTurn] + 1 : 0;
+
     // Evaluate every position: the score scores the move just played, the best move judges the next one
     const { score, bestmove } = await evaluate(fullFen(fen, turn, uci));
     if (gameId !== currentGameId) return;
@@ -256,26 +270,33 @@ async function handleMessage(gameId, body) {
     // No legal moves left: checkmate when the side to move is lost, otherwise stalemate
     const mine = lastTurn === currentPlayerColor;
     const gameOver = bestmove === "(none)" ? (score < 0 ? "mate" : "stalemate") : null;
-    const moment =
+    const promotion = uci?.length === 5 ? uci[4] : null;
+    const special =
         gameOver === "mate" ? (mine ? "delivered_mate" : "got_mated") :
         gameOver === "stalemate" ? (mine ? "stalemated" : null) :
-        enPassant ? "en_passant" : null;
-    if (moment) {
-        console.log("Moment:", moment);
-        callbacks.onMoment?.(moment);
-    }
+        enPassant ? "en_passant" :
+        promotion === "n" ? "knight_promotion" :
+        promotion && mine ? "promotion" :
+        mine && checkStreak[lastTurn] === 3 ? "check_spam" :
+        !mine && before && clampScore(before.score) - moverScore >= OPPONENT_BLUNDER ? "opponent_blunder" : null;
+    if (special) moment(special);
 
     if (mine) {
         // Joining mid-game (or after a restart) there's nothing to compare the first move against;
         // a special moment gets its own sound instead of the delta one
-        if (prevMyScore !== null && !moment) {
+        if (prevMyScore !== null && !special) {
             const moveDelta = moverScore - prevMyScore;
-            console.log(`Player ${lastTurn} moved, delta: ${moveDelta}`);
-            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore });
+            console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}`);
+            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime });
         }
         prevMyScore = moverScore;
     } else if (before && cheat && !cheat.finished) {
         cheat.record({ ply, uci, before: before.score, bestmove: before.bestmove, after: moverScore, thinkTime, clockBefore });
         if (cheat.shouldAlert()) callbacks.onCheatAlert?.(cheat.opponent, cheat.summary());
     }
+}
+
+function moment(name) {
+    console.log("Moment:", name);
+    callbacks.onMoment?.(name);
 }

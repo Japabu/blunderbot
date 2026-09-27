@@ -15,24 +15,34 @@ BlunderBot is a Discord bot that watches your Lichess games and provides **compl
 
 ## Sound Effect Tier List
 
-### When You Make a Good Move (+50 to +300 centipawns):
-- 📯 **Airhorn** (+300): For when you accidentally play like Magnus
-- 💰 **Price is Right** (+150): *Come on down!* You're the next contestant on "Not Terrible at Chess!"
+Every slot is a folder in `sounds/` and a random clip from it plays (never the same one twice in a row), so drop more mp3s in to add variety.
 
-### When You Blunder (-50 to -800 centipawns):
-- 🎮 **Minecraft Damage** (-50): *Oof* but pixelated
-- 😤 **Bruh** (-100): The universal sound of disappointment
-- 🤕 **Roblox Oof** (-150): Death sound for your position
-- 💨 **Wet Fart** (-300): For when you really, *really* messed up
-- 💥 **Vine Boom** (-800): You hung the queen, didn't you
+### When You Make a Good Move:
+- 🤏 **okay_move** (+50, only now and then): Kaiser Michael, for a semi-good move that isn't that special
+- 💰 **good_move** (+150): Price is Right, "Okay let's go", anime wow, Owen Wilson *wow*
+- 📯 **great_move** (+300): Airhorn, MLG airhorn, "Oh baby a triple", Hallelujah
+- 🦔 **fast_good_move**: a good move played instantly gets Sonic's *gotta go fast*
+
+### When You Blunder:
+- 🎮 **blunder_tiny** (-50): Minecraft damage, huh cat
+- 😤 **blunder_small** (-100): Bruh, Taco Bell bong
+- 🤕 **blunder_medium** (-150): Roblox oof, SpongeBob fail
+- 💨 **blunder_big** (-300): Wet fart, Windows XP shutdown
+- 💥 **blunder_queen** (-800): Vine boom
+- ⌨️ **misinput**: a big blunder played within a second. *IT WAS A MISINPUT, CALM DOWN*
+- 😩 **threw_win**: you were clearly winning (+5) and now you're not: faah, Curb Your Enthusiasm
 
 ### Special Moments:
-- 😩 **Faah**: You were clearly winning (+5) and now you're not
-- 🌸 **Anime Ahh**: En passant (by anyone, because it's always an event)
-- 🏆 **Mission Passed! Respect+**: You delivered checkmate
-- 💔 **Emotional Damage**: You got checkmated
-- 🎺 **Sad Trombone**: You stalemated them. From a winning position. Probably.
-- 🤨 **Sus** / 👽 **X-Files theme**: Your opponent is playing suspiciously well / *very* suspiciously well (see below)
+- 🔔 **game_start**: Boxing bell
+- 🌸 **en_passant**: Anime ahh (by anyone, because it's always an event)
+- 🍄 **promotion**: Mario power-up, and 🏃 **knight_promotion** (anyone): *why are you running?*
+- ✋ **check_spam**: your third check in a row: *stop, stop, he's already dead*
+- 🤷 **opponent_blunder**: they hang something big: *oh no... anyway*
+- 🏆 **delivered_mate**: GTA mission passed, FF7 victory fanfare, We Are the Champions
+- 💔 **got_mated**: Emotional damage, *YOU DIED*, coffin dance, Mario death
+- 🎺 **stalemated**: you stalemated them: sad trombone, *directed by Robert B. Weide*
+- ⏱️ **win_on_time**: *to be continued*
+- 🤨 **sus** / 👽 **very_sus**: your opponent is playing suspiciously well / *very* suspiciously well (see below)
 
 ## Setup (If You Dare)
 
