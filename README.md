@@ -68,7 +68,7 @@ BlunderBot is a Discord bot that watches your Lichess games and provides **compl
 
 The bot also judges your opponent. Every opponent move after the opening is scored by Stockfish (skipping positions that are already decided), and their **average centipawn loss** is compared to what's normal for their rating. Engine top-move agreement and throwaway accounts (< 30 days old or < 50 games) push the needle further.
 
-- Mid-game: once they look sus, the bot says so in the channel you ran `/lichess` from (and plays `sounds/sus.mp3` if you drop one in)
+- Mid-game: once they look sus, the bot says so in the channel you ran `/lichess` from and plays the *sus* sound in voice
 - Game end (or `/stop`): a report with ACPL, expected ACPL, engine match %, and a verdict
 - Game start: an instant heads-up if Lichess already marked the opponent for a ToS violation
 
