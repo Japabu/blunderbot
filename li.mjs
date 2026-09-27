@@ -276,35 +276,35 @@ async function handleMessage(gameId, body) {
     const before = prevPosition?.ply === ply - 1 ? prevPosition : null;
     prevPosition = { ply, score, bestmove };
 
-    // No legal moves left: checkmate when the side to move is lost, otherwise stalemate
+    // No legal moves left: checkmate when the side to move is lost, otherwise stalemate. Only the game
+    // ending beats everything; the fun stuff below still loses to a real blunder (see onMoveDelta).
     const gameOver = bestmove === "(none)" ? (score < 0 ? "mate" : "stalemate") : null;
-    const promotion = uci?.length === 5 ? uci[4] : null;
-    const special =
+    const gameEnd =
         gameOver === "mate" ? (mine ? "delivered_mate" : "got_mated") :
-        gameOver === "stalemate" ? (mine ? "stalemated" : null) :
+        gameOver === "stalemate" && mine ? "stalemated" : null;
+    const promotion = uci?.length === 5 ? uci[4] : null;
+    const moveFlavor =
         enPassant ? "en_passant" :
         promotion === "n" ? "knight_promotion" :
         promotion && mine ? "promotion" :
         mine && checkStreak[lastTurn] === 3 ? "check_spam" :
-        !mine && before && clampScore(before.score) - moverScore >= OPPONENT_BLUNDER ? "opponent_blunder" : null;
-    if (special) moment(special);
+        flavor;
 
-    if (mine) {
-        // Joining mid-game (or after a restart) there's nothing to compare the first move against;
-        // a special moment gets its own sound instead of the delta one
-        if (prevMyScore !== null && !special) {
-            const moveDelta = moverScore - prevMyScore;
-            console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}, flavor: ${flavor}`);
-            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime, flavor, san });
-        } else if (!special) {
-            if (flavor) moment(flavor);
-            else callbacks.onCommentary?.(san);
-        }
-        prevMyScore = moverScore;
-    } else if (!special) {
-        if (flavor) moment(flavor);
-        else callbacks.onCommentary?.(san);
+    if (gameEnd) {
+        moment(gameEnd);
+    } else if (mine && prevMyScore !== null) {
+        const moveDelta = moverScore - prevMyScore;
+        console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}, flavor: ${moveFlavor}`);
+        callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime, flavor: moveFlavor, san });
+    } else if (!mine && !moveFlavor && before && clampScore(before.score) - moverScore >= OPPONENT_BLUNDER) {
+        moment("opponent_blunder");
+    } else if (moveFlavor) {
+        // Joining mid-game (or after a restart) there's no delta for the first move, so no blunder to lose to
+        moment(moveFlavor);
+    } else {
+        callbacks.onCommentary?.(san);
     }
+    if (mine) prevMyScore = moverScore;
 
     if (!mine && before && cheat && !cheat.finished) {
         cheat.record({ ply, uci, before: before.score, bestmove: before.bestmove, after: moverScore, thinkTime, clockBefore });
