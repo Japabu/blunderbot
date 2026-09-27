@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync
 import { AudioPlayerStatus, NoSubscriberBehavior, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { formatReport } from './cheat.mjs';
-import { getCurrentPlayerName, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
+import { getCurrentPlayerName, moveReceivedAt, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
 
 // Each sound slot is a folder in sounds/, and a random clip from it plays
 const BAD_SOUND_EFFECTS = [
@@ -86,6 +86,8 @@ const SOUND_POOLS = Object.fromEntries(readdirSync('./sounds', { withFileTypes: 
 	.map(entry => [entry.name, readdirSync(`./sounds/${entry.name}`).filter(file => file.endsWith('.mp3'))]));
 const lastPlayed = {};
 let nowPlaying = null;
+// Profiling: what was last handed to the player, and when (performance.now() ms)
+let pending = null;
 
 const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
 
@@ -99,7 +101,7 @@ function play(slot) {
 	lastPlayed[slot] = clip;
 	nowPlaying = slot;
 	console.log(`Sound: ${slot}/${clip}`);
-	player.play(createAudioResource(`./sounds/${slot}/${clip}`));
+	startPlaying(`${slot}/${clip}`, `./sounds/${slot}/${clip}`);
 }
 
 // Dmitri Komarov's move- and square-specific lines (from the dmitlichess extension) for moves that got no
@@ -122,7 +124,7 @@ function commentary(keyOrSan) {
 	const clip = clips[Math.floor(Math.random() * clips.length)];
 	nowPlaying = 'komarov';
 	console.log(`Komarov: ${key} (${clip})`);
-	player.play(createAudioResource(`./commentary/komarov/${clip}`));
+	startPlaying(`komarov/${clip}`, `./commentary/komarov/${clip}`);
 }
 
 function moveSound(moveDelta, { before, after, thinkTime, flavor }) {
@@ -145,6 +147,18 @@ player.on('error', error => {
 player.on(AudioPlayerStatus.Idle, () => {
 	nowPlaying = null;
 });
+player.on(AudioPlayerStatus.Playing, () => {
+	if (!pending) return;
+	const now = performance.now();
+	const sinceMove = pending.moveAt ? `, ${Math.round(now - pending.moveAt)} ms after the move arrived` : '';
+	console.log(`[timing] ${pending.name} playing ${Math.round(now - pending.at)} ms after play()${sinceMove}`);
+	pending = null;
+});
+
+function startPlaying(name, path) {
+	pending = { name, at: performance.now(), moveAt: moveReceivedAt() };
+	player.play(createAudioResource(path));
+}
 
 // The watched player and voice channel survive restarts (every deploy restarts the container)
 const SESSION_FILE = './data/session.json';
@@ -187,6 +201,11 @@ function startSpectating(guild, channelId, username) {
 	connection.on('error', error => {
 		console.error('Voice connection error:', error);
 	});
+	// Profiling: round trip to Discord's voice servers
+	const pingLog = setInterval(() => {
+		if (connection.state.status === 'destroyed') return clearInterval(pingLog);
+		console.log(`[timing] voice ping: websocket ${connection.ping.ws ?? '?'} ms, udp ${connection.ping.udp ?? '?'} ms`);
+	}, 60_000);
 
 	connection.subscribe(player);
 	watchPlayer(username, {

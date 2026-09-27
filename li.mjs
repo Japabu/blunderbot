@@ -69,7 +69,15 @@ let callbacks = {};
 
 // stockfish-server interrupts the running search when a new request arrives, so evaluate one position at a time
 let evalQueue = Promise.resolve();
-const evaluate = fen => (evalQueue = evalQueue.catch(() => { }).then(() => sf.evaluate(fen)));
+const evaluate = fen => (evalQueue = evalQueue.catch(() => { }).then(async () => {
+    const startedAt = performance.now();
+    const result = await sf.evaluate(fen);
+    return { ...result, startedAt, finishedAt: performance.now() };
+}));
+
+// Profiling: when the move currently being voiced arrived from Lichess (performance.now() ms)
+let lastMoveReceivedAt = null;
+export const moveReceivedAt = () => lastMoveReceivedAt;
 
 let interval = null;
 let polling = false;
@@ -207,15 +215,16 @@ function connectToGame(gameId) {
     ws.on('error', console.error);
 
     ws.on('message', async (data) => {
+        const receivedAt = performance.now();
         try {
-            await handleMessage(gameId, JSON.parse(data));
+            await handleMessage(gameId, JSON.parse(data), receivedAt);
         } catch (error) {
             console.error("Game message error:", error);
         }
     });
 }
 
-async function handleMessage(gameId, body) {
+async function handleMessage(gameId, body, receivedAt) {
     if (!body) return;
 
     // console.log("MESSAGE:", body);
@@ -268,8 +277,10 @@ async function handleMessage(gameId, body) {
     checkStreak[lastTurn] = san?.includes("+") ? checkStreak[lastTurn] + 1 : 0;
 
     // Evaluate every position: the score scores the move just played, the best move judges the next one
-    const { score, bestmove } = await evaluate(fullFen(fen, turn, uci));
+    const { score, bestmove, startedAt, finishedAt } = await evaluate(fullFen(fen, turn, uci));
     if (gameId !== currentGameId) return;
+    lastMoveReceivedAt = receivedAt;
+    console.log(`[timing] ply ${ply} ${lastTurn}: queued ${Math.round(startedAt - receivedAt)} ms, eval ${Math.round(finishedAt - startedAt)} ms, decided at +${Math.round(performance.now() - receivedAt)} ms`);
 
     // Mate scores are ±1e9, clamp them so a mating sequence isn't a million-centipawn swing per move
     const moverScore = clampScore(-score);
@@ -330,16 +341,17 @@ function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine) {
         queenTaken = { ply, white };
     }
 
+    // Once someone is on a capture streak the announcer keeps going: double, triple, quadra, penta, penta...
     const streak = captureStreak[lastTurn];
+    if (mine && streak >= 2) return ["double_kill", "triple_kill", "quadra_kill", "penta_kill"][Math.min(streak, 5) - 2];
     if (queenFlavor) return queenFlavor;
+    if (!mine && streak >= 2) return "opponent_double_kill";
     if (isKnightFork(board, uci)) return "fork";
     if (!capture) return null;
     if (isUpset(capture)) return "headshot";
     if (capture.capturer === "k") return "king_capture";
     if (captureRun === 4) return "bloodbath";
-    if (mine && streak >= 3) return ["triple_kill", "quadra_kill", "penta_kill"][Math.min(streak, 5) - 3];
     if (pieceCount(prevBoard) === 32) return "first_blood";
-    if (streak === 2) return mine ? "double_kill" : "opponent_double_kill";
     return null;
 }
 
