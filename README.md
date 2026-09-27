@@ -66,13 +66,16 @@ BlunderBot is a Discord bot that watches your Lichess games and provides **compl
 
 ## Cheater Detection (Is Your Opponent Suspiciously Good?)
 
-The bot also judges your opponent. Every opponent move after the opening is scored by Stockfish (skipping positions that are already decided), and their **average centipawn loss** is compared to what's normal for their rating. Engine top-move agreement and throwaway accounts (< 30 days old or < 50 games) push the needle further.
+The bot also judges your opponent. Every opponent move after the opening is scored by Stockfish (skipping positions that are already decided), and a *sus* sound plays in voice when they look engine-assisted:
 
-- Mid-game: once they look sus, the bot plays the *sus* sound in voice (no chat spam)
-- Game start: *sus* right away if Lichess already marked the opponent for a ToS violation
-- The numbers behind it (ACPL, expected ACPL, engine match %, verdict) go to the bot's log at alert time and game end
+- **Too accurate for their rating**: average centipawn loss compared to what's normal at their rating *and* time control (bullet players blunder more than rapid players at the same rating)
+- **Engine top move** way too often
+- **Robotic move times**: humans premove recaptures and burn clock on critical moves, engine copiers take the same few seconds for everything (ignored in bullet and time scrambles)
+- **Throwaway account** (< 30 days old or < 50 games) nudges it further, and a Lichess ToS mark plays *sus* at game start
 
-It's one game and a depth 8 engine, so treat "sus" as vibes, not proof. `STOCKFISH_DEPTH` raises the search depth if your hardware can take it.
+It plays *sus* when the verdict turns suspicious and again if it turns very suspicious. No chat spam: the numbers (ACPL, expected ACPL, engine match %, think-time CV, verdict) only go to the bot's log. The thresholds come from replaying real games of normal players and of Lichess-marked accounts (~5% of honest games trip it), so treat *sus* as vibes, not proof. `STOCKFISH_DEPTH` raises the search depth if your hardware can take it.
+
+`/lichess` survives bot restarts: the spectated player and voice channel are kept in `data/session.json`.
 
 ## Technical Details (For the Nerds)
 

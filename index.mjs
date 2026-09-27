@@ -1,9 +1,9 @@
 import 'dotenv/config';
 
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
-import { NoSubscriberBehavior, VoiceConnectionStatus, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
-import { Client, Events, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
+import { NoSubscriberBehavior, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
+import { Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { formatReport } from './cheat.mjs';
 import { getCurrentPlayerName, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
 
@@ -58,6 +58,7 @@ client.on(Events.Warn, error => {
 
 client.on(Events.ClientReady, () => {
 	console.log(`Logged in as ${client.user.tag}!`);
+	resumeSession();
 });
 
 
@@ -68,7 +69,83 @@ player.on('error', error => {
 	console.error('AudioPlayerError:', error);
 });
 
+// The watched player and voice channel survive restarts (every deploy restarts the container)
+const SESSION_FILE = './data/session.json';
+
+function saveSession(session) {
+	try {
+		mkdirSync('./data', { recursive: true });
+		writeFileSync(SESSION_FILE, JSON.stringify(session));
+	} catch (error) {
+		console.error('Could not save session:', error);
+	}
+}
+
+function clearSession() {
+	rmSync(SESSION_FILE, { force: true });
+}
+
+async function resumeSession() {
+	if (!existsSync(SESSION_FILE)) return;
+	try {
+		const { guildId, channelId, username } = JSON.parse(readFileSync(SESSION_FILE, 'utf8'));
+		const guild = await client.guilds.fetch(guildId);
+		console.log(`Resuming: spectating ${username}`);
+		startSpectating(guild, channelId, username);
+	} catch (error) {
+		console.error('Could not resume session:', error);
+	}
+}
+
+function startSpectating(guild, channelId, username) {
+	const connection = joinVoiceChannel({
+		channelId,
+		guildId: guild.id,
+		adapterCreator: guild.voiceAdapterCreator,
+	});
+
+	connection.on('stateChange', (oldState, newState) => {
+		console.log(`Voice connection: ${oldState.status} -> ${newState.status}`);
+	});
+	connection.on('error', error => {
+		console.error('Voice connection error:', error);
+	});
+
+	connection.subscribe(player);
+	const playSus = () => { if (existsSync('./sounds/sus.mp3')) player.play(loadSound('sus')); };
+	watchPlayer(username, {
+		onMoveDelta: moveDelta => {
+			let soundName;
+			if (moveDelta < 0) {
+				soundName = BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
+			} else {
+				soundName = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
+			}
+
+			if (soundName) player.play(loadSound(soundName));
+		},
+		// Cheat reports only go to the log; the voice channel just hears the sus sound
+		onGameStart: opponent => {
+			if (opponent.account?.tosViolation) playSus();
+		},
+		onCheatAlert: (opponent, summary) => {
+			console.log('Cheat alert:', formatReport(opponent, summary));
+			playSus();
+		},
+		onGameEnd: (opponent, summary) => console.log('Game report:', formatReport(opponent, summary)),
+	});
+	saveSession({ guildId: guild.id, channelId, username });
+}
+
 client.on(Events.InteractionCreate, async interaction => {
+	try {
+		await handleInteraction(interaction);
+	} catch (error) {
+		console.error('Interaction error:', error);
+	}
+});
+
+async function handleInteraction(interaction) {
 	if (interaction.isAutocomplete()) {
 		if (interaction.commandName === 'lichess') {
 			const focusedValue = interaction.options.getFocused();
@@ -93,45 +170,21 @@ client.on(Events.InteractionCreate, async interaction => {
 		const username = interaction.options.getString("username");
 		console.log(username);
 
-		const connection = joinVoiceChannel({
-			channelId: interaction.member.voice.channel.id,
-			guildId: interaction.guild.id,
-			adapterCreator: interaction.guild.voiceAdapterCreator,
-		});
+		const channelId = interaction.member?.voice?.channelId;
+		if (!channelId) {
+			await interaction.reply({ content: "Join a voice channel first, I need somewhere to play the sounds", flags: MessageFlags.Ephemeral });
+			return;
+		}
 
-		connection.on(VoiceConnectionStatus.Ready, () => {
-			console.log('The connection has entered the Ready state - ready to play audio!');
-		});
-
-		connection.subscribe(player);
-		const playSus = () => { if (existsSync('./sounds/sus.mp3')) player.play(loadSound('sus')); };
-		watchPlayer(username, {
-			onMoveDelta: moveDelta => {
-				let soundName;
-				if (moveDelta < 0) {
-					soundName = BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
-				} else {
-					soundName = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
-				}
-
-				if (soundName) player.play(loadSound(soundName));
-			},
-			// Cheat reports only go to the log; the voice channel just hears the sus sound
-			onGameStart: opponent => {
-				if (opponent.account?.tosViolation) playSus();
-			},
-			onCheatAlert: (opponent, summary) => {
-				console.log('Cheat alert:', formatReport(opponent, summary));
-				playSus();
-			},
-			onGameEnd: (opponent, summary) => console.log('Game report:', formatReport(opponent, summary)),
-		});
+		startSpectating(interaction.guild, channelId, username);
 		await interaction.reply("Spectating lichess player: " + username);
 	} else if (interaction.commandName === "stop") {
-		await interaction.reply("Stopped spectating lichess player: " + getCurrentPlayerName());
+		const playerName = getCurrentPlayerName();
 		stopWatching();
-		getVoiceConnection(interaction.guildId).destroy();
+		clearSession();
+		getVoiceConnection(interaction.guildId)?.destroy();
+		await interaction.reply(playerName ? "Stopped spectating lichess player: " + playerName : "Wasn't spectating anyone");
 	}
-});
+}
 
 client.login(process.env.TOKEN);
