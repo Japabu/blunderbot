@@ -1,6 +1,7 @@
 import 'dotenv/config';
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 
 import { AudioPlayerStatus, NoSubscriberBehavior, StreamType, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
@@ -113,9 +114,17 @@ const KOMAROV = JSON.parse(readFileSync('./commentary/komarov/meta.json', 'utf8'
 // and no SD card read, which took 300-800 ms per sound on the Pi
 const clipCache = new Map();
 
-for (const [slot, clips] of Object.entries(SOUND_POOLS)) for (const clip of clips) clipCache.set(`./sounds/${slot}/${clip}`, readFileSync(`./sounds/${slot}/${clip}`));
-for (const clips of Object.values(KOMAROV)) for (const clip of clips) clipCache.set(`./commentary/komarov/${clip}`, readFileSync(`./commentary/komarov/${clip}`));
-console.log(`Loaded ${clipCache.size} clips (${Math.round([...clipCache.values()].reduce((sum, clip) => sum + clip.length, 0) / 1048576)} MB)`);
+// Warm the cache in the background: reading all ~1500 clips off the Pi's SD card takes ~35 s, and the bot
+// shouldn't wait for that (a clip that isn't cached yet is read on demand in a few ms)
+(async () => {
+	const started = performance.now();
+	const paths = [
+		...Object.entries(SOUND_POOLS).flatMap(([slot, clips]) => clips.map(clip => `./sounds/${slot}/${clip}`)),
+		...Object.values(KOMAROV).flat().map(clip => `./commentary/komarov/${clip}`),
+	];
+	for (const path of paths) if (!clipCache.has(path)) clipCache.set(path, await readFile(path));
+	console.log(`Cached ${clipCache.size} clips in ${Math.round((performance.now() - started) / 1000)} s`);
+})().catch(error => console.error('Clip preload failed:', error));
 
 function komarovKey(san) {
 	const move = san.replace(/[+#]/g, '').replace(/=[QRBN]/, '');
