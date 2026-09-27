@@ -109,6 +109,10 @@ function play(slot) {
 // meme sound. He never talks over another sound.
 const KOMAROV = JSON.parse(readFileSync('./commentary/komarov/meta.json', 'utf8'));
 
+// Every clip is Ogg Opus, what Discord streams anyway, and kept in memory: that way playback needs no ffmpeg
+// and no SD card read, which took 300-800 ms per sound on the Pi
+const clipCache = new Map();
+
 for (const [slot, clips] of Object.entries(SOUND_POOLS)) for (const clip of clips) clipCache.set(`./sounds/${slot}/${clip}`, readFileSync(`./sounds/${slot}/${clip}`));
 for (const clips of Object.values(KOMAROV)) for (const clip of clips) clipCache.set(`./commentary/komarov/${clip}`, readFileSync(`./commentary/komarov/${clip}`));
 console.log(`Loaded ${clipCache.size} clips (${Math.round([...clipCache.values()].reduce((sum, clip) => sum + clip.length, 0) / 1048576)} MB)`);
@@ -159,10 +163,6 @@ player.on(AudioPlayerStatus.Playing, () => {
 	console.log(`[timing] ${pending.name} playing ${Math.round(now - pending.at)} ms after play()${sinceMove}`);
 	pending = null;
 });
-
-// Every clip is Ogg Opus, what Discord streams anyway, and kept in memory: that way playback needs no ffmpeg
-// and no SD card read, which took 300-800 ms per sound on the Pi
-const clipCache = new Map();
 
 function startPlaying(name, path) {
 	pending = { name, at: performance.now(), moveAt: moveReceivedAt() };
