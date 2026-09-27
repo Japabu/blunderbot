@@ -19,11 +19,20 @@ BlunderBot is a Discord bot that watches your Lichess games and provides **compl
 - 📯 **Airhorn** (+300): For when you accidentally play like Magnus
 - 💰 **Price is Right** (+150): *Come on down!* You're the next contestant on "Not Terrible at Chess!"
 
-### When You Blunder (-50 to -300 centipawns):
+### When You Blunder (-50 to -800 centipawns):
 - 🎮 **Minecraft Damage** (-50): *Oof* but pixelated
 - 😤 **Bruh** (-100): The universal sound of disappointment
 - 🤕 **Roblox Oof** (-150): Death sound for your position
 - 💨 **Wet Fart** (-300): For when you really, *really* messed up
+- 💥 **Vine Boom** (-800): You hung the queen, didn't you
+
+### Special Moments:
+- 😩 **Faah**: You were clearly winning (+5) and now you're not
+- 🌸 **Anime Ahh**: En passant (by anyone, because it's always an event)
+- 🏆 **Mission Passed! Respect+**: You delivered checkmate
+- 💔 **Emotional Damage**: You got checkmated
+- 🎺 **Sad Trombone**: You stalemated them. From a winning position. Probably.
+- 🤨 **Sus** / 👽 **X-Files theme**: Your opponent is playing suspiciously well / *very* suspiciously well (see below)
 
 ## Setup (If You Dare)
 
@@ -66,14 +75,14 @@ BlunderBot is a Discord bot that watches your Lichess games and provides **compl
 
 ## Cheater Detection (Is Your Opponent Suspiciously Good?)
 
-The bot also judges your opponent. Every opponent move after the opening is scored by Stockfish (skipping positions that are already decided), and a *sus* sound plays in voice when they look engine-assisted:
+The bot also judges your opponent. Every opponent move after the opening is scored by Stockfish (skipping positions that are already decided), and a *sus* sound plays in voice when they look engine-assisted (and the X-Files theme when it gets worse):
 
 - **Too accurate for their rating**: average centipawn loss compared to what's normal at their rating *and* time control (bullet players blunder more than rapid players at the same rating)
 - **Engine top move** way too often
 - **Robotic move times**: humans premove recaptures and burn clock on critical moves, engine copiers take the same few seconds for everything (ignored in bullet and time scrambles)
 - **Throwaway account** (< 30 days old or < 50 games) nudges it further, and a Lichess ToS mark plays *sus* at game start
 
-It plays *sus* when the verdict turns suspicious and again if it turns very suspicious. No chat spam: the numbers (ACPL, expected ACPL, engine match %, think-time CV, verdict) only go to the bot's log. The thresholds come from replaying real games of normal players and of Lichess-marked accounts (~5% of honest games trip it), so treat *sus* as vibes, not proof. `STOCKFISH_DEPTH` raises the search depth if your hardware can take it.
+It plays *sus* when the verdict turns suspicious and the X-Files theme if it turns very suspicious. No chat spam: the numbers (ACPL, expected ACPL, engine match %, think-time CV, verdict) only go to the bot's log. The thresholds come from replaying real games of normal players and of Lichess-marked accounts (~5% of honest games trip it), so treat *sus* as vibes, not proof. `STOCKFISH_DEPTH` raises the search depth if your hardware can take it.
 
 `/lichess` survives bot restarts: the spectated player and voice channel are kept in `data/session.json`.
 

@@ -8,6 +8,7 @@ import { formatReport } from './cheat.mjs';
 import { getCurrentPlayerName, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
 
 const BAD_SOUND_EFFECTS = [
+	["vine_boom", -800], // about a queen
 	["wet_fart", -300],
 	["oof", -150],
 	["bruh", -100],
@@ -18,6 +19,17 @@ const GOOD_SOUND_EFFECTS = [
 	["airhorn", 300],
 	["price", 150],
 ]
+
+const MOMENT_SOUNDS = {
+	en_passant: "en_passant",
+	delivered_mate: "mission_passed",
+	got_mated: "emotional_damage",
+	stalemated: "sad_trombone",
+}
+
+// Clearly winning before the move, equal or worse after it
+const THREW_WIN_BEFORE = 500;
+const THREW_WIN_AFTER = 100;
 
 process.on('unhandledRejection', error => {
 	console.error('Unhandled promise rejection:', error);
@@ -112,25 +124,28 @@ function startSpectating(guild, channelId, username) {
 	});
 
 	connection.subscribe(player);
-	const playSus = () => { if (existsSync('./sounds/sus.mp3')) player.play(loadSound('sus')); };
+	const play = name => player.play(loadSound(name));
 	watchPlayer(username, {
-		onMoveDelta: moveDelta => {
+		onMoveDelta: (moveDelta, { before, after }) => {
 			let soundName;
-			if (moveDelta < 0) {
+			if (before >= THREW_WIN_BEFORE && after <= THREW_WIN_AFTER) {
+				soundName = "faah";
+			} else if (moveDelta < 0) {
 				soundName = BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
 			} else {
 				soundName = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
 			}
 
-			if (soundName) player.play(loadSound(soundName));
+			if (soundName) play(soundName);
 		},
-		// Cheat reports only go to the log; the voice channel just hears the sus sound
+		onMoment: moment => play(MOMENT_SOUNDS[moment]),
+		// Cheat reports only go to the log; the voice channel just hears sus (and X-Files once it's very sus)
 		onGameStart: opponent => {
-			if (opponent.account?.tosViolation) playSus();
+			if (opponent.account?.tosViolation) play('sus');
 		},
 		onCheatAlert: (opponent, summary) => {
 			console.log('Cheat alert:', formatReport(opponent, summary));
-			playSus();
+			play(summary.verdict === 'very sus' ? 'x_files' : 'sus');
 		},
 		onGameEnd: (opponent, summary) => console.log('Game report:', formatReport(opponent, summary)),
 	});

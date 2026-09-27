@@ -42,11 +42,16 @@ function makeSri() {
     return result;
 }
 
+// Piece on a square ("e4") of a FEN board, "." when empty
+function squareAt(board, square) {
+    const rank = board.split("/")[8 - square[1]].replace(/\d/g, n => ".".repeat(n));
+    return rank[square.charCodeAt(0) - 97];
+}
+
 // Lichess only sends the board, so rebuild the rest of the FEN: castling rights are assumed while
 // king and rook are still at home, and a double pawn push leaves an en passant square behind
 function fullFen(board, turn, lastUci) {
-    const squares = board.split("/").map(rank => rank.replace(/\d/g, n => ".".repeat(n)));
-    const at = square => squares[8 - square[1]][square.charCodeAt(0) - 97];
+    const at = square => squareAt(board, square);
 
     let castling = "";
     if (at("e1") === "K") castling += (at("h1") === "R" ? "K" : "") + (at("a1") === "R" ? "Q" : "");
@@ -60,6 +65,13 @@ function fullFen(board, turn, lastUci) {
     return `${board} ${turn} ${castling || "-"} ${enPassant} 0 1`;
 }
 
+// A pawn landing diagonally on a square that was empty can only be an en passant capture
+function isEnPassant(prevBoard, board, uci) {
+    if (!prevBoard || !uci || uci[0] === uci[2]) return false;
+    const dest = uci.slice(2, 4);
+    return "pP".includes(squareAt(board, dest)) && squareAt(prevBoard, dest) === ".";
+}
+
 
 let currentPlayerName = null;
 let currentGameId = null;
@@ -67,6 +79,7 @@ let currentPlayerColor = null;
 let prevMyScore = null;  // watched player's score after their previous move, null until one was seen
 let prevPosition = null; // { ply, score, bestmove } of the last evaluated position, side-to-move POV
 let prevClocks = null;   // { white, black } seconds left after the previous move
+let prevBoard = null;    // board after the previous move
 let cheat = null;
 let callbacks = {};
 
@@ -78,7 +91,9 @@ let interval = null;
 let polling = false;
 let ws = null;
 
-// callbacks: onMoveDelta(delta), onGameStart(opponent), onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
+// callbacks: onMoveDelta(delta, { before, after }), onMoment(moment), onGameStart(opponent),
+// onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
+// moment: "en_passant" (either side), "delivered_mate", "got_mated", "stalemated" (the watched player stalemated the opponent)
 export async function watchPlayer(playerName, newCallbacks) {
     callbacks = newCallbacks;
     if (currentPlayerName?.toLowerCase() === playerName.toLowerCase()) return;
@@ -181,6 +196,7 @@ function connectToGame(gameId) {
     prevMyScore = null;
     prevPosition = null;
     prevClocks = null;
+    prevBoard = null;
 
     const sri = makeSri();
     ws = new WebSocket(`wss://socket5.lichess.org/watch/${gameId}/white/v6?sri=${sri}`, {
@@ -225,24 +241,40 @@ async function handleMessage(gameId, body) {
     const clockBefore = prevClocks?.[moverClock];
     if (clock) prevClocks = clock;
 
+    const enPassant = isEnPassant(prevBoard, fen, uci);
+    prevBoard = fen;
+
     // Evaluate every position: the score scores the move just played, the best move judges the next one
     const { score, bestmove } = await evaluate(fullFen(fen, turn, uci));
     if (gameId !== currentGameId) return;
 
     // Mate scores are ±1e9, clamp them so a mating sequence isn't a million-centipawn swing per move
     const moverScore = clampScore(-score);
-    const before = prevPosition;
+    const before = prevPosition?.ply === ply - 1 ? prevPosition : null;
     prevPosition = { ply, score, bestmove };
 
-    if (lastTurn === currentPlayerColor) {
-        // Joining mid-game (or after a restart) there's nothing to compare the first move against
-        if (prevMyScore !== null) {
+    // No legal moves left: checkmate when the side to move is lost, otherwise stalemate
+    const mine = lastTurn === currentPlayerColor;
+    const gameOver = bestmove === "(none)" ? (score < 0 ? "mate" : "stalemate") : null;
+    const moment =
+        gameOver === "mate" ? (mine ? "delivered_mate" : "got_mated") :
+        gameOver === "stalemate" ? (mine ? "stalemated" : null) :
+        enPassant ? "en_passant" : null;
+    if (moment) {
+        console.log("Moment:", moment);
+        callbacks.onMoment?.(moment);
+    }
+
+    if (mine) {
+        // Joining mid-game (or after a restart) there's nothing to compare the first move against;
+        // a special moment gets its own sound instead of the delta one
+        if (prevMyScore !== null && !moment) {
             const moveDelta = moverScore - prevMyScore;
             console.log(`Player ${lastTurn} moved, delta: ${moveDelta}`);
-            callbacks.onMoveDelta?.(moveDelta);
+            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore });
         }
         prevMyScore = moverScore;
-    } else if (before?.ply === ply - 1 && cheat && !cheat.finished) {
+    } else if (before && cheat && !cheat.finished) {
         cheat.record({ ply, uci, before: before.score, bestmove: before.bestmove, after: moverScore, thinkTime, clockBefore });
         if (cheat.shouldAlert()) callbacks.onCheatAlert?.(cheat.opponent, cheat.summary());
     }
