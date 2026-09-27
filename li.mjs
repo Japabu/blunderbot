@@ -57,13 +57,14 @@ let captureRun = 0;                 // consecutive plies that were all captures
 let queenTaken = null;              // { ply, white } of the last queen capture, to spot queen trades
 let scrambled = false;              // time scramble already announced this game
 let replayedUntil = 0;              // on connect Lichess replays recent moves; up to this ply they stay silent
-let waitTimer = null;
+let waitTimers = [];
 
 // A move losing this much hands the watched player something big
 const OPPONENT_BLUNDER = 300;
-// Thinking longer than this share of the base time (at least 10 s) gets waiting music
+// A long think first gets Komarov wondering what to play, then him asking for a move, then waiting music
+// (at this share of the base time, but never before the hurry line had its turn)
+const THINK_SECONDS = initial => initial < 180 ? 5 : initial < 600 ? 10 : 25;
 const SLOW_SHARE = 0.15;
-const SLOW_MIN = 10;
 // Both clocks under this many seconds is a time scramble
 const SCRAMBLE_SECONDS = 10;
 let cheat = null;
@@ -87,7 +88,7 @@ let ws = null;
 
 // callbacks: onMove(), onMoveInstant({ ply, san, flavor }) as soon as a move arrives, before the engine,
 // onMoveDelta(delta, { before, after, thinkTime, flavor, san }) for the watched player once it's evaluated,
-// onMoment(moment), onCommentary("resign"/"draw") for results,
+// onMoment(moment), onCommentary("resign"/"draw"/"think"/"hurry") for results and long thinks,
 // onGameStart(opponent), onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
 // moment: "game_start", "en_passant" (either side), "delivered_mate", "got_mated", "stalemated" (the watched
 // player stalemated the opponent), "promotion", "knight_promotion" (either side), "check_spam" (third check
@@ -163,7 +164,7 @@ function finishGame() {
 }
 
 function closeGame() {
-    clearTimeout(waitTimer);
+    clearWaitTimers();
     finishGame();
     currentGameId = null;
     try { ws?.close(); } catch (ignored) { }
@@ -209,7 +210,7 @@ function connectToGame(gameId) {
     captureRun = 0;
     queenTaken = null;
     scrambled = false;
-    clearTimeout(waitTimer);
+    clearWaitTimers();
 
     const sri = makeSri();
     ws = new WebSocket(`wss://socket5.lichess.org/watch/${gameId}/white/v6?sri=${sri}`, {
@@ -239,7 +240,7 @@ async function handleMessage(gameId, body, receivedAt) {
     if (messageType === "endData" || messageType === "end") {
         const { winner, status } = body.d ?? {};
         const myColor = currentPlayerColor === "w" ? "white" : "black";
-        clearTimeout(waitTimer);
+        clearWaitTimers();
         if (cheat && !cheat.finished) {
             // Checkmate already had its sound on the mating move
             if (winner && winner !== myColor && status?.name !== "mate") moment("lost_game");
@@ -365,13 +366,20 @@ function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine) {
     return null;
 }
 
-// Waiting music when the side to move takes too long; the next move cancels it
+// Komarov and then waiting music when the side to move takes too long; the next move cancels it all
 function watchThinkTime(gameId, ply, turn, initial) {
-    clearTimeout(waitTimer);
+    clearWaitTimers();
     // The clock only starts once both sides made their first move
     if (ply < 2 || !initial) return;
-    const limit = Math.max(SLOW_MIN, initial * SLOW_SHARE);
-    waitTimer = setTimeout(() => {
-        if (gameId === currentGameId && !cheat?.finished) moment(turn === currentPlayerColor ? "you_slow" : "opponent_slow");
-    }, limit * 1000);
+    const think = THINK_SECONDS(initial);
+    const stillThinking = () => gameId === currentGameId && !cheat?.finished;
+    const after = (seconds, fn) => waitTimers.push(setTimeout(() => stillThinking() && fn(), seconds * 1000));
+    after(think, () => callbacks.onCommentary?.("think"));
+    after(think * 2, () => callbacks.onCommentary?.("hurry"));
+    after(Math.max(think * 2 + 5, initial * SLOW_SHARE), () => moment(turn === currentPlayerColor ? "you_slow" : "opponent_slow"));
+}
+
+function clearWaitTimers() {
+    waitTimers.forEach(clearTimeout);
+    waitTimers = [];
 }

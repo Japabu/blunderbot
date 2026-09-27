@@ -55,6 +55,7 @@ Anything that can be read off the board (captures, forks, en passant, checkmate,
 - 🍴 **fork**: a knight attacks the king and the queen or a rook at once: *surprise*
 
 ### Clock:
+- 🤔 Komarov gets impatient on long thinks (10 s in blitz, 5 s in bullet, 25 s in rapid): *"what to play"*, *"hmm"*, *"thinking now thinking"*, and twice that long in: *"need to make move"*, *"time running"*, *"zeitnot"*
 - 🎵 **opponent_slow**: they've been thinking for 15% of the base time: Jeopardy, elevator music, snoring (stops as soon as they move)
 - 👨‍🍳 **you_slow**: you're the one thinking that long: *let him cook*
 - 🎷 **time_scramble**: both clocks under 10 seconds: Yakety Sax (only big moments interrupt it)
