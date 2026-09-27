@@ -104,8 +104,7 @@ client.on(Events.InteractionCreate, async interaction => {
 		});
 
 		connection.subscribe(player);
-		const channel = interaction.channel;
-		const say = content => channel?.send(content).catch(error => console.error('Send error:', error));
+		const playSus = () => { if (existsSync('./sounds/sus.mp3')) player.play(loadSound('sus')); };
 		watchPlayer(username, {
 			onMoveDelta: moveDelta => {
 				let soundName;
@@ -117,14 +116,15 @@ client.on(Events.InteractionCreate, async interaction => {
 
 				if (soundName) player.play(loadSound(soundName));
 			},
+			// Cheat reports only go to the log; the voice channel just hears the sus sound
 			onGameStart: opponent => {
-				if (opponent.account?.tosViolation) say(`🚨 Heads up: **${opponent.name}** is marked by Lichess for ToS violation`);
+				if (opponent.account?.tosViolation) playSus();
 			},
 			onCheatAlert: (opponent, summary) => {
-				if (existsSync('./sounds/sus.mp3')) player.play(loadSound('sus'));
-				say(formatReport(opponent, summary));
+				console.log('Cheat alert:', formatReport(opponent, summary));
+				playSus();
 			},
-			onGameEnd: (opponent, summary) => say(formatReport(opponent, summary)),
+			onGameEnd: (opponent, summary) => console.log('Game report:', formatReport(opponent, summary)),
 		});
 		await interaction.reply("Spectating lichess player: " + username);
 	} else if (interaction.commandName === "stop") {
