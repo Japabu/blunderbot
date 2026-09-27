@@ -8,5 +8,6 @@ RUN npm ci --omit=dev
 
 COPY *.mjs ./
 COPY sounds/ ./sounds/
+COPY commentary/ ./commentary/
 
 CMD ["node", "index.mjs"]

@@ -1,5 +1,6 @@
 import WebSocket from 'ws';
 
+import { captureInfo, fullFen, isEnPassant, isKnightFork, isUpset, pieceCount } from "./board.mjs";
 import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
 
@@ -42,37 +43,6 @@ function makeSri() {
     return result;
 }
 
-// Piece on a square ("e4") of a FEN board, "." when empty
-function squareAt(board, square) {
-    const rank = board.split("/")[8 - square[1]].replace(/\d/g, n => ".".repeat(n));
-    return rank[square.charCodeAt(0) - 97];
-}
-
-// Lichess only sends the board, so rebuild the rest of the FEN: castling rights are assumed while
-// king and rook are still at home, and a double pawn push leaves an en passant square behind
-function fullFen(board, turn, lastUci) {
-    const at = square => squareAt(board, square);
-
-    let castling = "";
-    if (at("e1") === "K") castling += (at("h1") === "R" ? "K" : "") + (at("a1") === "R" ? "Q" : "");
-    if (at("e8") === "k") castling += (at("h8") === "r" ? "k" : "") + (at("a8") === "r" ? "q" : "");
-
-    let enPassant = "-";
-    if (lastUci && "pP".includes(at(lastUci.slice(2, 4))) && lastUci[0] === lastUci[2] && Math.abs(lastUci[1] - lastUci[3]) === 2) {
-        enPassant = lastUci[0] + (+lastUci[1] + +lastUci[3]) / 2;
-    }
-
-    return `${board} ${turn} ${castling || "-"} ${enPassant} 0 1`;
-}
-
-// A pawn landing diagonally on a square that was empty can only be an en passant capture
-function isEnPassant(prevBoard, board, uci) {
-    if (!prevBoard || !uci || uci[0] === uci[2]) return false;
-    const dest = uci.slice(2, 4);
-    return "pP".includes(squareAt(board, dest)) && squareAt(prevBoard, dest) === ".";
-}
-
-
 let currentPlayerName = null;
 let currentGameId = null;
 let currentPlayerColor = null;
@@ -80,10 +50,20 @@ let prevMyScore = null;  // watched player's score after their previous move, nu
 let prevPosition = null; // { ply, score, bestmove } of the last evaluated position, side-to-move POV
 let prevClocks = null;   // { white, black } seconds left after the previous move
 let prevBoard = null;    // board after the previous move
-let checkStreak = { w: 0, b: 0 }; // consecutive checking moves per side
+let checkStreak = { w: 0, b: 0 };   // consecutive checking moves per side
+let captureStreak = { w: 0, b: 0 }; // consecutive capturing moves per side
+let captureRun = 0;                 // consecutive plies that were all captures
+let queenTaken = null;              // { ply, white } of the last queen capture, to spot queen trades
+let scrambled = false;              // time scramble already announced this game
+let waitTimer = null;
 
 // A move losing this much hands the watched player something big
 const OPPONENT_BLUNDER = 300;
+// Thinking longer than this share of the base time (at least 10 s) gets waiting music
+const SLOW_SHARE = 0.15;
+const SLOW_MIN = 10;
+// Both clocks under this many seconds is a time scramble
+const SCRAMBLE_SECONDS = 10;
 let cheat = null;
 let callbacks = {};
 
@@ -95,11 +75,16 @@ let interval = null;
 let polling = false;
 let ws = null;
 
-// callbacks: onMoveDelta(delta, { before, after }), onMoment(moment), onGameStart(opponent),
-// onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
+// callbacks: onMove(), onMoveDelta(delta, { before, after, thinkTime, flavor, san }), onMoment(moment),
+// onCommentary(san or "resign"/"draw") for moves and results that got no sound of their own,
+// onGameStart(opponent), onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
 // moment: "game_start", "en_passant" (either side), "delivered_mate", "got_mated", "stalemated" (the watched
 // player stalemated the opponent), "promotion", "knight_promotion" (either side), "check_spam" (third check
-// in a row by the watched player), "opponent_blunder", "win_on_time"
+// in a row by the watched player), "opponent_blunder", "win_on_time", "you_slow", "opponent_slow",
+// "time_scramble", "lost_game" (lost any way but checkmate), or a flavor
+// flavor: what a move did on the board, no engine involved: "queen_trade", "lost_queen", "fork", "headshot",
+// "king_capture", "bloodbath", "first_blood", "double_kill" ... "penta_kill", "opponent_double_kill".
+// On the watched player's moves it comes with onMoveDelta so a real blunder can still win.
 // onMoveDelta's info: before/after are the watched player's eval around the move, thinkTime in seconds or null
 export async function watchPlayer(playerName, newCallbacks) {
     callbacks = newCallbacks;
@@ -164,6 +149,7 @@ function finishGame() {
 }
 
 function closeGame() {
+    clearTimeout(waitTimer);
     finishGame();
     currentGameId = null;
     try { ws?.close(); } catch (ignored) { }
@@ -205,6 +191,11 @@ function connectToGame(gameId) {
     prevClocks = null;
     prevBoard = null;
     checkStreak = { w: 0, b: 0 };
+    captureStreak = { w: 0, b: 0 };
+    captureRun = 0;
+    queenTaken = null;
+    scrambled = false;
+    clearTimeout(waitTimer);
 
     const sri = makeSri();
     ws = new WebSocket(`wss://socket5.lichess.org/watch/${gameId}/white/v6?sri=${sri}`, {
@@ -233,18 +224,34 @@ async function handleMessage(gameId, body) {
     if (messageType === "endData" || messageType === "end") {
         const { winner, status } = body.d ?? {};
         const myColor = currentPlayerColor === "w" ? "white" : "black";
-        if (status?.name === "outoftime" && winner === myColor && cheat && !cheat.finished) moment("win_on_time");
+        clearTimeout(waitTimer);
+        if (cheat && !cheat.finished) {
+            // Checkmate already had its sound on the mating move
+            if (winner && winner !== myColor && status?.name !== "mate") moment("lost_game");
+            else if (winner === myColor && status?.name === "outoftime") moment("win_on_time");
+            else if (winner === myColor && status?.name === "resign") callbacks.onCommentary?.("resign");
+            else if (!winner && ["draw", "stalemate"].includes(status?.name)) callbacks.onCommentary?.("draw");
+        }
         finishGame();
         return;
     }
     if (messageType !== "move") return;
 
     const { fen, ply, uci, san, clock } = body.d ?? {};
+    callbacks.onMove?.();
     if (ply === 1) moment("game_start");
 
     // turn = side to move now, lastTurn = side that just moved
     const turn = ply % 2 === 0 ? "w" : "b";
     const lastTurn = ply % 2 !== 0 ? "w" : "b";
+    const mine = lastTurn === currentPlayerColor;
+
+    const initial = cheat?.opponent.clock?.initial;
+    watchThinkTime(gameId, ply, turn, initial);
+    if (clock && initial >= 60 && !scrambled && clock.white < SCRAMBLE_SECONDS && clock.black < SCRAMBLE_SECONDS) {
+        scrambled = true;
+        moment("time_scramble");
+    }
 
     // Think time of the move just played; the clock after a move already includes the increment
     const moverClock = lastTurn === "w" ? "white" : "black";
@@ -254,6 +261,8 @@ async function handleMessage(gameId, body) {
     if (clock) prevClocks = clock;
 
     const enPassant = isEnPassant(prevBoard, fen, uci);
+    const capture = captureInfo(prevBoard, uci, enPassant);
+    const flavor = boardFlavor(prevBoard, fen, uci, capture, ply, lastTurn, mine);
     prevBoard = fen;
 
     checkStreak[lastTurn] = san?.includes("+") ? checkStreak[lastTurn] + 1 : 0;
@@ -268,7 +277,6 @@ async function handleMessage(gameId, body) {
     prevPosition = { ply, score, bestmove };
 
     // No legal moves left: checkmate when the side to move is lost, otherwise stalemate
-    const mine = lastTurn === currentPlayerColor;
     const gameOver = bestmove === "(none)" ? (score < 0 ? "mate" : "stalemate") : null;
     const promotion = uci?.length === 5 ? uci[4] : null;
     const special =
@@ -286,11 +294,19 @@ async function handleMessage(gameId, body) {
         // a special moment gets its own sound instead of the delta one
         if (prevMyScore !== null && !special) {
             const moveDelta = moverScore - prevMyScore;
-            console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}`);
-            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime });
+            console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}, flavor: ${flavor}`);
+            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime, flavor, san });
+        } else if (!special) {
+            if (flavor) moment(flavor);
+            else callbacks.onCommentary?.(san);
         }
         prevMyScore = moverScore;
-    } else if (before && cheat && !cheat.finished) {
+    } else if (!special) {
+        if (flavor) moment(flavor);
+        else callbacks.onCommentary?.(san);
+    }
+
+    if (!mine && before && cheat && !cheat.finished) {
         cheat.record({ ply, uci, before: before.score, bestmove: before.bestmove, after: moverScore, thinkTime, clockBefore });
         if (cheat.shouldAlert()) callbacks.onCheatAlert?.(cheat.opponent, cheat.summary());
     }
@@ -299,4 +315,41 @@ async function handleMessage(gameId, body) {
 function moment(name) {
     console.log("Moment:", name);
     callbacks.onMoment?.(name);
+}
+
+// What the move did on the board, most remarkable first. Updates the capture streaks, so call once per move.
+function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine) {
+    captureStreak[lastTurn] = capture ? captureStreak[lastTurn] + 1 : 0;
+    captureRun = capture ? captureRun + 1 : 0;
+    if (!prevBoard) return null;
+
+    let queenFlavor = null;
+    if (capture?.captured === "q") {
+        const white = lastTurn !== "w"; // the captured queen's color
+        queenFlavor = queenTaken?.ply === ply - 1 && queenTaken.white !== white ? "queen_trade" : !mine ? "lost_queen" : null;
+        queenTaken = { ply, white };
+    }
+
+    const streak = captureStreak[lastTurn];
+    if (queenFlavor) return queenFlavor;
+    if (isKnightFork(board, uci)) return "fork";
+    if (!capture) return null;
+    if (isUpset(capture)) return "headshot";
+    if (capture.capturer === "k") return "king_capture";
+    if (captureRun === 4) return "bloodbath";
+    if (mine && streak >= 3) return ["triple_kill", "quadra_kill", "penta_kill"][Math.min(streak, 5) - 3];
+    if (pieceCount(prevBoard) === 32) return "first_blood";
+    if (streak === 2) return mine ? "double_kill" : "opponent_double_kill";
+    return null;
+}
+
+// Waiting music when the side to move takes too long; the next move cancels it
+function watchThinkTime(gameId, ply, turn, initial) {
+    clearTimeout(waitTimer);
+    // The clock only starts once both sides made their first move
+    if (ply < 2 || !initial) return;
+    const limit = Math.max(SLOW_MIN, initial * SLOW_SHARE);
+    waitTimer = setTimeout(() => {
+        if (gameId === currentGameId && !cheat?.finished) moment(turn === currentPlayerColor ? "you_slow" : "opponent_slow");
+    }, limit * 1000);
 }

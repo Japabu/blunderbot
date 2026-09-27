@@ -18,7 +18,6 @@ BlunderBot is a Discord bot that watches your Lichess games and provides **compl
 Every slot is a folder in `sounds/` and a random clip from it plays (never the same one twice in a row), so drop more mp3s in to add variety.
 
 ### When You Make a Good Move:
-- 🤏 **okay_move** (+50, only now and then): Kaiser Michael, for a semi-good move that isn't that special
 - 💰 **good_move** (+150): Price is Right, "Okay let's go", anime wow, Owen Wilson *wow*
 - 📯 **great_move** (+300): Airhorn, MLG airhorn, "Oh baby a triple", Hallelujah
 - 🦔 **fast_good_move**: a good move played instantly gets Sonic's *gotta go fast*
@@ -39,9 +38,24 @@ Every slot is a folder in `sounds/` and a random clip from it plays (never the s
 - ✋ **check_spam**: your third check in a row: *stop, stop, he's already dead*
 - 🤷 **opponent_blunder**: they hang something big: *oh no... anyway*
 - 🏆 **delivered_mate**: GTA mission passed, FF7 victory fanfare, We Are the Champions
-- 💔 **got_mated**: Emotional damage, *YOU DIED*, coffin dance, Mario death
+- 💔 **got_mated**: Emotional damage, *YOU DIED*, coffin dance, Mario death, Käsiger Michael
+- 🧀 **lost_game**: lost by resignation, on time or abandoning: Käsiger Michael
 - 🎺 **stalemated**: you stalemated them: sad trombone, *directed by Robert B. Weide*
 - ⏱️ **win_on_time**: *to be continued*
+
+### Captures (no engine needed, and they beat the good/bad move sound unless it's a real blunder):
+- 🩸 **first_blood**: first capture of the game
+- ⚔️ **double_kill** / **triple_kill** / **quadra_kill** / **penta_kill**: you capture on 2, 3, 4, 5 moves in a row, and 😈 **opponent_double_kill** when they do it twice
+- 🎯 **headshot**: something takes a piece worth way more than itself (pawn takes queen, knight takes rook)
+- 😭 **lost_queen**: they take your queen: *NOOOOO*, and 👋 **queen_trade**: *bye, have a great time* / sayonara
+- 🚪 **king_capture**: the king takes something: *I am the one who knocks*
+- 💀 **bloodbath**: four captures in a row: *FATALITY*
+- 🍴 **fork**: a knight attacks the king and the queen or a rook at once: *surprise*
+
+### Clock:
+- 🎵 **opponent_slow**: they've been thinking for 15% of the base time: Jeopardy, elevator music, snoring (stops as soon as they move)
+- 👨‍🍳 **you_slow**: you're the one thinking that long: *let him cook*
+- 🎷 **time_scramble**: both clocks under 10 seconds: Yakety Sax (only big moments interrupt it)
 - 🤨 **sus** / 👽 **very_sus**: your opponent is playing suspiciously well / *very* suspiciously well (see below)
 
 ## Setup (If You Dare)
@@ -82,6 +96,10 @@ Every slot is a folder in `sounds/` and a random clip from it plays (never the s
 3. **Analysis Phase**: Feeds your moves to Stockfish for professional judgment
 4. **Shame Phase**: Calculates move quality and plays appropriate sound effect
 5. **Repeat**: Until you rage quit or achieve chess enlightenment
+
+## Dmitri Komarov Commentary
+
+Every move that doesn't get a meme sound (yours and your opponent's) gets GM Dmitri Komarov announcing it instead: *"Knight c3!"*, captures by their square, castling, checks, plus his lines for draws and your opponent resigning. Only his move- and square-specific lines are used, never the random filler, and he never talks over another sound. The ~1400 clips come from Vincent Simard's [dmitlichess](https://github.com/vincentsimard/dmitlichess) extension (WTFPL), levelled a bit quieter than the memes, in `commentary/komarov/`.
 
 ## Cheater Detection (Is Your Opponent Suspiciously Good?)
 
