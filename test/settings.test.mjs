@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SettingsStore } from '../settings.mjs';
-import { SOUND_DEFAULTS, soundCategory, soundEnabled } from '../sound-settings.mjs';
+import { BOT_DEFAULTS, SOUND_DEFAULTS, soundCategory, soundEnabled } from '../sound-settings.mjs';
 
 test('all shipped sound slots are covered and the four switches are independent', () => {
 	const expected = {
@@ -43,5 +43,21 @@ test('malformed saved settings fail visibly without overwriting the file', () =>
 		writeFileSync(file, 'broken');
 		assert.throws(() => new SettingsStore(file, SOUND_DEFAULTS));
 		assert.equal(readFileSync(file, 'utf8'), 'broken');
+	} finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('hand-and-brain is off by default and persists independently of sound preferences', () => {
+	const dir = mkdtempSync(join(tmpdir(), 'blunderbot-brain-settings-'));
+	try {
+		const file = join(dir, 'settings.json');
+		const store = new SettingsStore(file, BOT_DEFAULTS);
+		assert.equal(store.get('one').hand_and_brain, false);
+		store.update('one', { dimitri: false, misc: false, hand_and_brain: true });
+		const resumed = new SettingsStore(file, BOT_DEFAULTS);
+		assert.equal(resumed.get('one').hand_and_brain, true);
+		assert.equal(resumed.get('two').hand_and_brain, false);
+		resumed.update('one', { hand_and_brain: false });
+		assert.equal(resumed.get('one').dimitri, false);
+		assert.equal(resumed.get('one').misc, false);
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });

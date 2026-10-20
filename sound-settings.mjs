@@ -1,4 +1,5 @@
 export const SOUND_DEFAULTS = { dimitri: true, good_moves: true, bad_moves: true, misc: true };
+export const BOT_DEFAULTS = { ...SOUND_DEFAULTS, hand_and_brain: false };
 
 const GOOD = new Set(['good_move', 'great_move', 'fast_good_move']);
 const BAD = new Set(['blunder_tiny', 'blunder_small', 'blunder_medium', 'blunder_big', 'blunder_queen', 'misinput', 'threw_win']);
