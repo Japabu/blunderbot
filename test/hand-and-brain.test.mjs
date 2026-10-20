@@ -159,3 +159,38 @@ test('all piece names and feedback have packaged nonempty Ogg Opus audio', () =>
         assert.ok(bytes.length > 1000, name);
     }
 });
+
+test('the piece repeats at three-second intervals without repeated analysis delaying it', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const { brain, spoken } = setup();
+    t.after(() => brain.reset());
+    const p = position(); brain.setPosition(p); brain.analyzed(p, analysis('g1f3'));
+    t.mock.timers.tick(2999);
+    brain.setPosition(p); brain.analyzed(p, analysis('g1f3'));
+    assert.deepEqual(spoken, ['knight']);
+    t.mock.timers.tick(1);
+    assert.deepEqual(spoken, ['knight', 'knight']);
+    t.mock.timers.tick(3000);
+    assert.deepEqual(spoken, ['knight', 'knight', 'knight']);
+    brain.moved({ gameId: 'game', ply: 1, piece: 'n' });
+    t.mock.timers.tick(9000);
+    assert.equal(spoken.length, 3);
+});
+
+test('reminders stop on a new position, game end, reset, or disabling the mode', t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    for (const cancel of [
+        brain => brain.setPosition(position(start, 2)),
+        brain => brain.setPosition(null),
+        brain => brain.reset(),
+        (_, state) => { state.enabled = false; },
+    ]) {
+        const { brain, spoken, state } = setup();
+        const p = position(); brain.setPosition(p); brain.analyzed(p, analysis('e2e4'));
+        t.mock.timers.tick(2999);
+        cancel(brain, state);
+        t.mock.timers.tick(9000);
+        assert.deepEqual(spoken, ['pawn']);
+        brain.reset();
+    }
+});

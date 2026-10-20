@@ -1,6 +1,7 @@
 import { Chess } from 'chess.js';
 
 export const PIECE_NAMES = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
+const REPEAT_MS = 3000;
 
 // Return only a piece type. The full move must never be announced to the hand.
 export function pieceForBestMove(fen, bestmove) {
@@ -70,12 +71,16 @@ export class HandAndBrain {
     }
 
     reset() {
+        this.cancelRepeat();
         this.position = null;
         this.piece = null;
     }
 
     setPosition(position) {
-        if (this.position !== position) this.piece = null;
+        if (this.position !== position) {
+            this.cancelRepeat();
+            this.piece = null;
+        }
         this.position = position;
     }
 
@@ -86,9 +91,26 @@ export class HandAndBrain {
         if (!piece) return;
         this.piece = piece;
         this.speak(piece);
+        this.scheduleRepeat(position, piece);
+    }
+
+    cancelRepeat() {
+        clearTimeout(this.repeatTimer);
+        this.repeatTimer = null;
+    }
+
+    scheduleRepeat(position, piece) {
+        this.repeatTimer = setTimeout(() => {
+            this.repeatTimer = null;
+            if (!this.enabled() || this.position !== position || this.piece !== piece) return;
+            this.speak(piece);
+            this.scheduleRepeat(position, piece);
+        }, REPEAT_MS);
+        this.repeatTimer.unref?.();
     }
 
     moved({ gameId, ply, piece } = {}) {
+        this.cancelRepeat();
         if (this.enabled() && this.piece && this.position?.gameId === gameId && this.position.ply + 1 === ply
             && piece && PIECE_NAMES[piece] !== this.piece) this.speak('wrong_piece');
         this.piece = null;

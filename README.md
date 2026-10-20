@@ -95,7 +95,7 @@ Anything that can be read off the board (captures, forks, en passant, checkmate,
 
 ## Hand and brain
 
-Enable `/config hand_and_brain:true`, then use `/lichess <username>` as usual. If the bot is already watching you, enabling the mode takes effect on the current turn. It announces **pawn, knight, bishop, rook, queen, or king** when it is your turn, and you choose a move with that type of piece. Castling counts as a king move, and promotion counts as a pawn move. Moving a different piece gets a spoken “That was the wrong piece”; the bot cannot prevent a move in Lichess.
+Enable `/config hand_and_brain:true`, then use `/lichess <username>` as usual. If the bot is already watching you, enabling the mode takes effect on the current turn. It announces **pawn, knight, bishop, rook, queen, or king** when it is your turn, and repeats that piece every three seconds until you move. Reminders stop when the position changes, the game ends, or the mode is disabled. You choose a move with that type of piece. Castling counts as a king move, and promotion counts as a pawn move. Moving a different piece gets a spoken “That was the wrong piece”; the bot cannot prevent a move in Lichess.
 
 The piece comes from Stockfish's best move at `STOCKFISH_DEPTH` (default 8), checked against the exact legal position. This means there is an engine-preferred move with the named piece; it does not promise that every move with that piece is good, or that a lost position can be saved. The bot never announces the destination or which of two same-type pieces to use. Standard chess and standard-chess starting positions are supported; other variants and out-of-sync positions produce no piece cue. Use this for training where engine assistance is permitted.
 
