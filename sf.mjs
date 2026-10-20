@@ -10,7 +10,9 @@ async function evaluate(fen) {
     const res = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!res.ok) throw new Error(`Stockfish request failed: ${res.status}`);
     const json = await res.json();
-    if (!Number.isFinite(json.score) || typeof json.bestmove !== 'string' || !(json.depth > 0)) throw new Error('Invalid Stockfish analysis response');
+    const terminal = ['(none)', '0000'].includes(json.bestmove);
+    if (!Number.isFinite(json.score) || typeof json.bestmove !== 'string'
+        || !Number.isInteger(json.depth) || json.depth < 0 || (json.depth === 0 && !terminal)) throw new Error('Invalid Stockfish analysis response');
     // console.log("Response:", json);
     return json;
 }
