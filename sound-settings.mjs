@@ -11,4 +11,7 @@ export function soundCategory(slot) {
 	return 'misc';
 }
 
-export const soundEnabled = (settings, slot) => settings[soundCategory(slot)];
+export function soundEnabled(settings, slot) {
+	const category = soundCategory(slot);
+	return settings[category] && (!settings.hand_and_brain || category === 'bad_moves');
+}

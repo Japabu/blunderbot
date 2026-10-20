@@ -99,7 +99,7 @@ Enable `/config hand_and_brain:true`, then use `/lichess <username>` as usual. I
 
 The piece comes from Stockfish's best move at `STOCKFISH_DEPTH` (default 8), checked against the exact legal position. This means there is an engine-preferred move with the named piece; it does not promise that every move with that piece is good, or that a lost position can be saved. The bot never announces the destination or which of two same-type pieces to use. Standard chess and standard-chess starting positions are supported; other variants and out-of-sync positions produce no piece cue. Use this for training where engine assistance is permitted.
 
-This mode replaces normal commentary and meme sounds with short prerecorded speech clips, independently of the four sound toggles. `/config hand_and_brain:false` restores your normal sound preferences. The setting is saved per server and survives deployments. Current games, including White's first move, are supported; delayed analysis from an earlier turn is discarded.
+This mode replaces normal commentary, good-move sounds, and miscellaneous effects with short prerecorded piece cues. You can also hear blunder, misinput, and thrown-win sounds with `/config bad_moves:true`, or mute them with `/config bad_moves:false`. Piece cues take priority over these effects. `/config hand_and_brain:false` restores your full normal sound preferences. The setting is saved per server and survives deployments. Current games, including White's first move, are supported; delayed analysis from an earlier turn is discarded.
 
 ## How It Works (The Magic Behind the Misery)
 
