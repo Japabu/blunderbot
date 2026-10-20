@@ -61,3 +61,15 @@ test('hand-and-brain is off by default and persists independently of sound prefe
 		assert.equal(resumed.get('one').misc, false);
 	} finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('hand-and-brain permits all bad-move effects when enabled and suppresses other categories', () => {
+	const settings = { ...BOT_DEFAULTS, hand_and_brain: true };
+	for (const slot of ['blunder_tiny', 'blunder_small', 'blunder_medium', 'blunder_big', 'blunder_queen', 'misinput', 'threw_win']) {
+		assert.equal(soundEnabled(settings, slot), true, slot);
+		assert.equal(soundEnabled({ ...settings, bad_moves: false }, slot), false, slot);
+	}
+	for (const slot of ['komarov', 'good_move', 'great_move', 'fast_good_move', 'double_kill', 'time_scramble', 'sus', 'game_start']) {
+		assert.equal(soundEnabled(settings, slot), false, slot);
+		assert.equal(soundEnabled({ ...settings, hand_and_brain: false }, slot), true, slot);
+	}
+});

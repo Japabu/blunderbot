@@ -132,7 +132,8 @@ const brain = new HandAndBrain({
 
 // Plays a random clip of a slot, never the same one twice in a row
 function play(slot) {
-	if (brainEnabled()) return false;
+	// A piece cue takes priority over blunder feedback; the next cue can also interrupt a meme clip.
+	if (brainEnabled() && nowPlaying === 'hand_and_brain') return false;
 	if (!enabled(slot)) return false;
 	const clips = SOUND_POOLS[slot] ?? [];
 	if (!clips.length) return console.error('No sounds for', slot);
@@ -360,7 +361,7 @@ async function handleInteraction(interaction) {
 		}
 		await interaction.reply({
 			content: `Settings (saved for this server):\n${Object.entries(settings).map(([key, value]) => `${key}: **${value ? 'on' : 'off'}**`).join('\n')}`
-				+ (settings.hand_and_brain ? '\n\nHand and brain: I name a piece on your turn; you choose its move. Piece cues replace the usual sounds.' : ''),
+				+ (settings.hand_and_brain ? '\n\nHand and brain: I name a piece on your turn; you choose its move. Bad-move sounds follow bad_moves; other sounds stay silent.' : ''),
 			flags: MessageFlags.Ephemeral,
 		});
 	} else if (interaction.commandName === "lichess") {
