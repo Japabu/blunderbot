@@ -8,6 +8,12 @@ import { AudioPlayerStatus, NoSubscriberBehavior, StreamType, createAudioPlayer,
 import { Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { formatReport } from './cheat.mjs';
 import { getCurrentPlayerName, moveReceivedAt, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
+import { SettingsStore } from './settings.mjs';
+import { SOUND_DEFAULTS, soundEnabled } from './sound-settings.mjs';
+
+const settingsStore = new SettingsStore('./data/settings.json', SOUND_DEFAULTS);
+let activeGuildId = null;
+const enabled = slot => soundEnabled(settingsStore.get(activeGuildId), slot);
 
 // Each sound slot is a folder in sounds/, and a random clip from it plays
 const BAD_SOUND_EFFECTS = [
@@ -45,6 +51,13 @@ process.on('unhandledRejection', error => {
 });
 
 const commands = [
+	new SlashCommandBuilder()
+		.setName('config')
+		.setDescription('Show or change saved sound settings for this server')
+		.addBooleanOption(option => option.setName('dimitri').setDescription('Dimitri Komarov commentary'))
+		.addBooleanOption(option => option.setName('good_moves').setDescription('Good and great move sounds'))
+		.addBooleanOption(option => option.setName('bad_moves').setDescription('Blunder, misinput and thrown win sounds'))
+		.addBooleanOption(option => option.setName('misc').setDescription('Captures, results, clocks and all other sounds')),
 	new SlashCommandBuilder()
 		.setName('ping')
 		.setDescription('Replies with Ponggg!'),
@@ -95,6 +108,7 @@ const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavi
 
 // Plays a random clip of a slot, never the same one twice in a row
 function play(slot) {
+	if (!enabled(slot)) return false;
 	const clips = SOUND_POOLS[slot] ?? [];
 	if (!clips.length) return console.error('No sounds for', slot);
 	if (nowPlaying === 'time_scramble' && !BIG_SLOTS.has(slot)) return;
@@ -104,6 +118,7 @@ function play(slot) {
 	nowPlaying = slot;
 	console.log(`Sound: ${slot}/${clip}`);
 	startPlaying(`${slot}/${clip}`, `./sounds/${slot}/${clip}`);
+	return true;
 }
 
 // Dmitri Komarov's move- and square-specific lines (from the dmitlichess extension) for moves that got no
@@ -135,6 +150,7 @@ function komarovKey(san) {
 }
 
 function commentary(keyOrSan) {
+	if (!enabled('komarov')) return;
 	if (nowPlaying && !WAITING_SLOTS.has(nowPlaying)) return;
 	const key = KOMAROV[keyOrSan] ? keyOrSan : komarovKey(keyOrSan);
 	const clips = key && KOMAROV[key];
@@ -147,11 +163,13 @@ function commentary(keyOrSan) {
 
 function moveSound(moveDelta, { before, after, thinkTime, flavor }) {
 	const instant = limit => thinkTime !== null && thinkTime < limit;
-	if (moveDelta <= MISINPUT_DELTA && instant(MISINPUT_TIME)) return "misinput";
-	if (before >= THREW_WIN_BEFORE && after <= THREW_WIN_AFTER) return "threw_win";
-	if (moveDelta <= REAL_BLUNDER) return BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
+	if (enabled('blunder_tiny')) {
+		if (moveDelta <= MISINPUT_DELTA && instant(MISINPUT_TIME)) return "misinput";
+		if (before >= THREW_WIN_BEFORE && after <= THREW_WIN_AFTER) return "threw_win";
+		if (moveDelta <= REAL_BLUNDER) return BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
+	}
 	// Otherwise what happened on the board (a capture streak, a fork, ...) beats the engine's opinion
-	if (flavor) return flavor;
+	if (flavor && enabled(flavor)) return flavor;
 	if (moveDelta < 0) return BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
 
 	const good = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
@@ -208,6 +226,7 @@ async function resumeSession() {
 }
 
 function startSpectating(guild, channelId, username) {
+	activeGuildId = guild.id;
 	const connection = joinVoiceChannel({
 		channelId,
 		guildId: guild.id,
@@ -233,8 +252,7 @@ function startSpectating(guild, channelId, username) {
 		},
 		// Right away: the board-only sound (capture, fork, mate, ...) or Komarov announcing the move
 		onMoveInstant: ({ san, flavor }) => {
-			if (flavor) play(flavor);
-			else commentary(san);
+			if (!flavor || !play(flavor)) commentary(san);
 		},
 		// Once the engine is done: only cut in if the verdict is something other than what's already playing
 		onMoveDelta: (moveDelta, info) => {
@@ -286,6 +304,20 @@ async function handleInteraction(interaction) {
 
 	if (interaction.commandName === "ping") {
 		await interaction.reply("Pong!");
+	} else if (interaction.commandName === 'config') {
+		if (!interaction.guildId) {
+			await interaction.reply({ content: 'Use this command in a server.', flags: MessageFlags.Ephemeral });
+			return;
+		}
+		const changes = Object.fromEntries(Object.keys(SOUND_DEFAULTS)
+			.map(key => [key, interaction.options.getBoolean(key)]).filter(([, value]) => value !== null));
+		const settings = Object.keys(changes).length
+			? settingsStore.update(interaction.guildId, changes) : settingsStore.get(interaction.guildId);
+		if (activeGuildId === interaction.guildId && nowPlaying && !enabled(nowPlaying)) player.stop();
+		await interaction.reply({
+			content: `Sound settings (saved for this server):\n${Object.entries(settings).map(([key, value]) => `${key}: **${value ? 'on' : 'off'}**`).join('\n')}`,
+			flags: MessageFlags.Ephemeral,
+		});
 	} else if (interaction.commandName === "lichess") {
 		const username = interaction.options.getString("username");
 		console.log(username);

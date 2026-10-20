@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.mjs",
   "scripts": {
+    "test": "node --test",
     "start": "node index.mjs"
   },
   "author": "",

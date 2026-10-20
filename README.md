@@ -88,6 +88,7 @@ Anything that can be read off the board (captures, forks, en passant, checkmate,
 
 ## Commands
 
+- `/config` — Show saved sound settings for this server. Pass any combination of `dimitri`, `good_moves`, `bad_moves`, and `misc` as `true` or `false` to change them immediately. All four default to on. For example, `/config dimitri:false good_moves:false` leaves blunders and other moments enabled. `misc` covers captures, game results, clock sounds, and suspicion alerts; `bad_moves` covers the blunder tiers, misinput, and thrown wins. Settings survive restarts in `data/settings.json`, alongside the saved session.
 - `/lichess <username>` - Start stalking a Lichess player (with their consent, hopefully)
 - `/stop` - Stop the madness (coward)
 - `/ping` - Check if the bot is alive and ready to judge you
