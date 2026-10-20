@@ -3,6 +3,7 @@ import WebSocket from 'ws';
 import { captureInfo, fullFen, isEnPassant, isKnightFork, isSnipe, pieceCount } from "./board.mjs";
 import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
+import { GamePosition } from './hand-and-brain.mjs';
 
 
 async function getGameInfo(gameId, playerName) {
@@ -23,10 +24,11 @@ async function getGameInfo(gameId, playerName) {
 
     const { white, black } = game?.players ?? {};
     const opponentOf = side => ({ name: side?.user?.name ?? "anonymous", rating: side?.rating, speed: game.speed, clock: game.clock });
-    const plies = game.moves ? game.moves.split(" ").length : 0;
+    const position = new GamePosition(game);
+    const plies = position.valid ? position.ply : (game.moves?.trim().split(/\s+/).filter(Boolean).length ?? 0);
 
-    if (playerName === white?.user?.name?.toLowerCase()) return { color: "w", opponent: opponentOf(black), plies };
-    else if (playerName === black?.user?.name?.toLowerCase()) return { color: "b", opponent: opponentOf(white), plies };
+    if (playerName === white?.user?.name?.toLowerCase()) return { color: "w", opponent: opponentOf(black), plies, position };
+    else if (playerName === black?.user?.name?.toLowerCase()) return { color: "b", opponent: opponentOf(white), plies, position };
     else throw new Error('Player not found in game');
 };
 
@@ -58,6 +60,9 @@ let queenTaken = null;              // { ply, white } of the last queen capture,
 let scrambled = false;              // time scramble already announced this game
 let replayedUntil = 0;              // on connect Lichess replays recent moves; up to this ply they stay silent
 let waitTimers = [];
+let gamePosition = null;
+let currentPosition = null;
+let newestPly = 0;
 
 // A move losing this much hands the watched player something big
 const OPPONENT_BLUNDER = 300;
@@ -70,13 +75,43 @@ const SCRAMBLE_SECONDS = 10;
 let cheat = null;
 let callbacks = {};
 
-// stockfish-server interrupts the running search when a new request arrives, so evaluate one position at a time
+// Keep evaluations ordered, and share each position's search with hand-and-brain mode.
 let evalQueue = Promise.resolve();
 const evaluate = fen => (evalQueue = evalQueue.catch(() => { }).then(async () => {
     const startedAt = performance.now();
     const result = await sf.evaluate(fen);
     return { ...result, startedAt, finishedAt: performance.now() };
 }));
+
+function setCurrentPosition(snapshot) {
+    if (gamePosition?.ended || cheat?.finished) snapshot = null;
+    if (snapshot && currentPosition?.gameId === currentGameId && currentPosition.ply === snapshot.ply && currentPosition.fen === snapshot.fen) return;
+    currentPosition = snapshot ? { gameId: currentGameId, playerColor: currentPlayerColor, fen: snapshot.fen, ply: snapshot.ply } : null;
+    callbacks.onPosition?.(currentPosition);
+}
+
+// Both commentary and the brain share the same search, including when the mode is enabled mid-turn.
+function analyzePosition(position) {
+    if (!position.analysisPromise) {
+        position.analysisPromise = evaluate(position.fen).then(result => {
+            position.analysis = result;
+            if (currentPosition === position) callbacks.onPositionAnalysis?.(position, result);
+            return result;
+        }).catch(error => {
+            position.analysisPromise = null;
+            throw error;
+        });
+    }
+    return position.analysisPromise;
+}
+
+export function requestBrainCue() {
+    const position = currentPosition;
+    if (!callbacks.wantsBrainCue?.() || !position || position.fen.split(' ')[1] !== currentPlayerColor) return;
+    callbacks.onPosition?.(position);
+    if (position.analysis) callbacks.onPositionAnalysis?.(position, position.analysis);
+    else void analyzePosition(position).catch(error => console.error('Brain analysis failed:', error));
+}
 
 // Profiling: when the move currently being voiced arrived from Lichess (performance.now() ms)
 let lastMoveReceivedAt = null;
@@ -90,6 +125,8 @@ let ws = null;
 // onMoveDelta(delta, { before, after, thinkTime, flavor, san }) for the watched player once it's evaluated,
 // onMoment(moment), onCommentary("resign"/"draw"/"think"/"hurry") for results and long thinks,
 // onGameStart(opponent), onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
+// onPosition(position|null) invalidates old brain cues immediately; onPositionAnalysis(position, result)
+// is only emitted while that exact position is still current. wantsBrainCue() opts into opening searches.
 // moment: "game_start", "en_passant" (either side), "delivered_mate", "got_mated", "stalemated" (the watched
 // player stalemated the opponent), "promotion", "knight_promotion" (either side), "check_spam" (third check
 // in a row by the watched player), "opponent_blunder", "win_on_time", "you_slow", "opponent_slow",
@@ -123,6 +160,17 @@ async function poll() {
 
         if (!gameId) return;
 
+        // A dropped websocket move invalidates the exact position. Resync rather than guessing a cue.
+        if (gameId === currentGameId && gamePosition?.needsSync && ws?.readyState === WebSocket.OPEN) {
+            const playerName = currentPlayerName;
+            const info = await getGameInfo(gameId, playerName);
+            if (playerName !== currentPlayerName || gameId !== currentGameId) return;
+            if (info.position.valid && info.position.ply < newestPly) return;
+            gamePosition = info.position;
+            setCurrentPosition(gamePosition.valid ? gamePosition.current : null);
+            requestBrainCue();
+        }
+
         if (gameId !== currentGameId) {
             try { ws?.close(); } catch (ignored) { }
         }
@@ -130,11 +178,13 @@ async function poll() {
         if (!ws || ws.readyState === WebSocket.CLOSED) {
             if (gameId !== currentGameId) finishGame();
             const playerName = currentPlayerName;
-            const { color, opponent, plies } = await getGameInfo(gameId, playerName);
+            const { color, opponent, plies, position } = await getGameInfo(gameId, playerName);
             if (playerName !== currentPlayerName) return;
             currentGameId = gameId;
             currentPlayerColor = color;
+            gamePosition = position;
             replayedUntil = plies;
+            newestPly = plies;
             console.log("player color:", currentPlayerColor, "opponent:", opponent.name, "plies so far:", plies);
             if (!cheat || cheat.gameId !== gameId) {
                 // Ring the bell as soon as the game is found, not when white gets around to the first move
@@ -145,11 +195,14 @@ async function poll() {
                 callbacks.onGameStart?.(opponent);
             }
             connectToGame(gameId);
+            setCurrentPosition(position.valid ? position.current : null);
+            requestBrainCue();
         }
 
         if (ws?.readyState === WebSocket.OPEN) {
             ws.send("null");
         }
+        requestBrainCue();
     } catch (error) {
         console.error("Lichess poll error:", error);
     } finally {
@@ -158,6 +211,8 @@ async function poll() {
 }
 
 function finishGame() {
+    if (gamePosition) gamePosition.ended = true;
+    setCurrentPosition(null);
     if (!cheat || cheat.finished) return;
     cheat.finished = true;
     callbacks.onGameEnd?.(cheat.opponent, cheat.summary());
@@ -167,6 +222,7 @@ function closeGame() {
     clearWaitTimers();
     finishGame();
     currentGameId = null;
+    gamePosition = null;
     try { ws?.close(); } catch (ignored) { }
     ws = null;
 }
@@ -218,21 +274,22 @@ function connectToGame(gameId) {
             origin: "https://lichess.org"
         }
     });
+    const socket = ws;
 
     ws.on('error', console.error);
 
     ws.on('message', async (data) => {
         const receivedAt = performance.now();
         try {
-            await handleMessage(gameId, JSON.parse(data), receivedAt);
+            await handleMessage(gameId, JSON.parse(data), receivedAt, socket);
         } catch (error) {
             console.error("Game message error:", error);
         }
     });
 }
 
-async function handleMessage(gameId, body, receivedAt) {
-    if (!body) return;
+async function handleMessage(gameId, body, receivedAt, socket) {
+    if (!body || gameId !== currentGameId || socket !== ws) return;
 
     // console.log("MESSAGE:", body);
 
@@ -254,8 +311,12 @@ async function handleMessage(gameId, body, receivedAt) {
     if (messageType !== "move") return;
 
     const { fen, ply, uci, san, clock } = body.d ?? {};
+    newestPly = Math.max(newestPly, ply);
     const replayed = ply <= replayedUntil;
-    if (!replayed) callbacks.onMove?.();
+    const tracked = gamePosition?.observe({ fen, ply, san });
+    if (!replayed) callbacks.onMove?.({ gameId, ply, piece: tracked?.move?.piece });
+    if (!gamePosition?.valid) setCurrentPosition(null);
+    else if (tracked?.ply === newestPly && !cheat?.finished) setCurrentPosition(tracked);
 
     // turn = side to move now, lastTurn = side that just moved
     const turn = ply % 2 === 0 ? "w" : "b";
@@ -302,8 +363,9 @@ async function handleMessage(gameId, body, receivedAt) {
     if (replayed && ply < replayedUntil) return;
 
     // Evaluate every position: the score scores the move just played, the best move judges the next one
-    const { score, bestmove, startedAt, finishedAt } = await evaluate(fullFen(fen, turn, uci));
-    if (gameId !== currentGameId) return;
+    const position = currentPosition?.ply === ply ? currentPosition : null;
+    const { score, bestmove, startedAt, finishedAt } = await (position ? analyzePosition(position) : evaluate(tracked?.fen ?? fullFen(fen, turn, uci)));
+    if (gameId !== currentGameId || socket !== ws) return;
     console.log(`[timing] ply ${ply} ${lastTurn}: queued ${Math.round(startedAt - receivedAt)} ms, eval ${Math.round(finishedAt - startedAt)} ms, decided at +${Math.round(performance.now() - receivedAt)} ms`);
 
     // Mate scores are ±1e9, clamp them so a mating sequence isn't a million-centipawn swing per move

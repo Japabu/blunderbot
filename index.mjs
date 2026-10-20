@@ -7,13 +7,15 @@ import { Readable } from 'node:stream';
 import { AudioPlayerStatus, NoSubscriberBehavior, StreamType, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { formatReport } from './cheat.mjs';
-import { getCurrentPlayerName, moveReceivedAt, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
+import { getCurrentPlayerName, moveReceivedAt, requestBrainCue, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
 import { SettingsStore } from './settings.mjs';
-import { SOUND_DEFAULTS, soundEnabled } from './sound-settings.mjs';
+import { BOT_DEFAULTS, soundEnabled } from './sound-settings.mjs';
+import { HandAndBrain, PIECE_NAMES } from './hand-and-brain.mjs';
 
-const settingsStore = new SettingsStore('./data/settings.json', SOUND_DEFAULTS);
+const settingsStore = new SettingsStore('./data/settings.json', BOT_DEFAULTS);
 let activeGuildId = null;
 const enabled = slot => soundEnabled(settingsStore.get(activeGuildId), slot);
+const brainEnabled = () => settingsStore.get(activeGuildId).hand_and_brain;
 
 // Each sound slot is a folder in sounds/, and a random clip from it plays
 const BAD_SOUND_EFFECTS = [
@@ -53,11 +55,12 @@ process.on('unhandledRejection', error => {
 const commands = [
 	new SlashCommandBuilder()
 		.setName('config')
-		.setDescription('Show or change saved sound settings for this server')
+		.setDescription('Show or change saved sound settings and hand-and-brain mode')
 		.addBooleanOption(option => option.setName('dimitri').setDescription('Dimitri Komarov commentary'))
 		.addBooleanOption(option => option.setName('good_moves').setDescription('Good and great move sounds'))
 		.addBooleanOption(option => option.setName('bad_moves').setDescription('Blunder, misinput and thrown win sounds'))
-		.addBooleanOption(option => option.setName('misc').setDescription('Captures, results, clocks and all other sounds')),
+		.addBooleanOption(option => option.setName('misc').setDescription('Captures, results, clocks and all other sounds'))
+		.addBooleanOption(option => option.setName('hand_and_brain').setDescription('Standard chess: the bot names a piece with a strong move; you choose the move')),
 	new SlashCommandBuilder()
 		.setName('ping')
 		.setDescription('Replies with Ponggg!'),
@@ -118,9 +121,18 @@ let nowPlaying = null;
 let pending = null;
 
 const player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Pause } });
+const brain = new HandAndBrain({
+	enabled: brainEnabled,
+	speak: piece => {
+		nowPlaying = 'hand_and_brain';
+		console.log(`Hand and brain: ${piece}`);
+		startPlaying(`hand-and-brain/${piece}`, `./commentary/hand-and-brain/${piece}.ogg`);
+	},
+});
 
 // Plays a random clip of a slot, never the same one twice in a row
 function play(slot) {
+	if (brainEnabled()) return false;
 	if (!enabled(slot)) return false;
 	const clips = SOUND_POOLS[slot] ?? [];
 	if (!clips.length) return console.error('No sounds for', slot);
@@ -149,6 +161,7 @@ const clipCache = new Map();
 	const paths = [
 		...Object.entries(SOUND_POOLS).flatMap(([slot, clips]) => clips.map(clip => `./sounds/${slot}/${clip}`)),
 		...Object.values(KOMAROV).flat().map(clip => `./commentary/komarov/${clip}`),
+		...[...Object.values(PIECE_NAMES), 'wrong_piece'].map(piece => `./commentary/hand-and-brain/${piece}.ogg`),
 	];
 	for (const path of paths) if (!clipCache.has(path)) clipCache.set(path, await readFile(path));
 	console.log(`Cached ${clipCache.size} clips in ${Math.round((performance.now() - started) / 1000)} s`);
@@ -163,6 +176,7 @@ function komarovKey(san) {
 }
 
 function commentary(keyOrSan) {
+	if (brainEnabled()) return;
 	if (!enabled('komarov')) return;
 	if (nowPlaying && !WAITING_SLOTS.has(nowPlaying)) return;
 	const key = KOMAROV[keyOrSan] ? keyOrSan : komarovKey(keyOrSan);
@@ -239,6 +253,8 @@ async function resumeSession() {
 }
 
 function startSpectating(guild, channelId, username) {
+	brain.reset();
+	player.stop();
 	activeGuildId = guild.id;
 	const connection = joinVoiceChannel({
 		channelId,
@@ -260,8 +276,15 @@ function startSpectating(guild, channelId, username) {
 
 	connection.subscribe(player);
 	watchPlayer(username, {
-		onMove: () => {
-			if (WAITING_SLOTS.has(nowPlaying)) player.stop();
+		wantsBrainCue: brainEnabled,
+		onPosition: position => {
+			brain.setPosition(position);
+			if (!position && nowPlaying === 'hand_and_brain') player.stop();
+		},
+		onPositionAnalysis: (position, analysis) => brain.analyzed(position, analysis),
+		onMove: move => {
+			if (brainEnabled() || WAITING_SLOTS.has(nowPlaying)) player.stop();
+			brain.moved(move);
 		},
 		// Right away: the board-only sound (capture, fork, mate, ...) or Komarov announcing the move
 		onMoveInstant: ({ san, flavor }) => {
@@ -285,6 +308,7 @@ function startSpectating(guild, channelId, username) {
 		},
 		onGameEnd: (opponent, summary) => console.log('Game report:', formatReport(opponent, summary)),
 	});
+	requestBrainCue();
 	saveSession({ guildId: guild.id, channelId, username });
 }
 
@@ -322,13 +346,21 @@ async function handleInteraction(interaction) {
 			await interaction.reply({ content: 'Use this command in a server.', flags: MessageFlags.Ephemeral });
 			return;
 		}
-		const changes = Object.fromEntries(Object.keys(SOUND_DEFAULTS)
+		const previous = settingsStore.get(interaction.guildId);
+		const changes = Object.fromEntries(Object.keys(BOT_DEFAULTS)
 			.map(key => [key, interaction.options.getBoolean(key)]).filter(([, value]) => value !== null));
 		const settings = Object.keys(changes).length
 			? settingsStore.update(interaction.guildId, changes) : settingsStore.get(interaction.guildId);
-		if (activeGuildId === interaction.guildId && nowPlaying && !enabled(nowPlaying)) player.stop();
+		if (activeGuildId === interaction.guildId) {
+			if (previous.hand_and_brain !== settings.hand_and_brain) {
+				player.stop();
+				brain.reset();
+				requestBrainCue();
+			} else if (nowPlaying && nowPlaying !== 'hand_and_brain' && !enabled(nowPlaying)) player.stop();
+		}
 		await interaction.reply({
-			content: `Sound settings (saved for this server):\n${Object.entries(settings).map(([key, value]) => `${key}: **${value ? 'on' : 'off'}**`).join('\n')}`,
+			content: `Settings (saved for this server):\n${Object.entries(settings).map(([key, value]) => `${key}: **${value ? 'on' : 'off'}**`).join('\n')}`
+				+ (settings.hand_and_brain ? '\n\nHand and brain: I name a piece on your turn; you choose its move. Piece cues replace the usual sounds.' : ''),
 			flags: MessageFlags.Ephemeral,
 		});
 	} else if (interaction.commandName === "lichess") {
@@ -342,10 +374,12 @@ async function handleInteraction(interaction) {
 		}
 
 		startSpectating(interaction.guild, channelId, username);
-		await interaction.reply("Spectating lichess player: " + username);
+		await interaction.reply("Spectating lichess player: " + username + (brainEnabled() ? '\nHand and brain is on: wait for a piece name, then choose a move with that piece.' : ''));
 	} else if (interaction.commandName === "stop") {
 		const playerName = getCurrentPlayerName();
 		stopWatching();
+		brain.reset();
+		player.stop();
 		clearSession();
 		getVoiceConnection(interaction.guildId)?.destroy();
 		await interaction.reply(playerName ? "Stopped spectating lichess player: " + playerName : "Wasn't spectating anyone");

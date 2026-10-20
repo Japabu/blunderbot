@@ -93,6 +93,14 @@ Anything that can be read off the board (captures, forks, en passant, checkmate,
 - `/stop` - Stop the madness (coward)
 - `/ping` - Check if the bot is alive and ready to judge you
 
+## Hand and brain
+
+Enable `/config hand_and_brain:true`, then use `/lichess <username>` as usual. If the bot is already watching you, enabling the mode takes effect on the current turn. It announces **pawn, knight, bishop, rook, queen, or king** when it is your turn, and you choose a move with that type of piece. Castling counts as a king move, and promotion counts as a pawn move. Moving a different piece gets a spoken “That was the wrong piece”; the bot cannot prevent a move in Lichess.
+
+The piece comes from Stockfish's best move at `STOCKFISH_DEPTH` (default 8), checked against the exact legal position. This means there is an engine-preferred move with the named piece; it does not promise that every move with that piece is good, or that a lost position can be saved. The bot never announces the destination or which of two same-type pieces to use. Standard chess and standard-chess starting positions are supported; other variants and out-of-sync positions produce no piece cue. Use this for training where engine assistance is permitted.
+
+This mode replaces normal commentary and meme sounds with short prerecorded speech clips, independently of the four sound toggles. `/config hand_and_brain:false` restores your normal sound preferences. The setting is saved per server and survives deployments. Current games, including White's first move, are supported; delayed analysis from an earlier turn is discarded.
+
 ## How It Works (The Magic Behind the Misery)
 
 1. **Stalking Phase**: Bot polls Lichess API every 3 seconds to see if you're playing
