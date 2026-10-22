@@ -13,7 +13,8 @@ async function getGameInfo(gameId, playerName) {
     playerName = playerName.toLowerCase();
 
     const response = await fetch(`https://lichess.org/game/export/${gameId}?moves=true&pgnInJson=false&tags=false&clocks=false&evals=false&opening=false&division=false`, {
-        headers: { 'Accept': 'application/json' }
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(10000),
     });
 
     if (!response.ok) {
@@ -63,6 +64,11 @@ let waitTimers = [];
 let gamePosition = null;
 let currentPosition = null;
 let newestPly = 0;
+let lastSocketMessageAt = 0;
+let lastPositionUpdateAt = 0;
+let lastPositionCheckAt = 0;
+const SOCKET_TIMEOUT_MS = 12000;
+const POSITION_CHECK_MS = 15000;
 
 // A move losing this much hands the watched player something big
 const OPPONENT_BLUNDER = 300;
@@ -153,22 +159,43 @@ async function poll() {
     if (!currentPlayerName || polling) return;
     polling = true;
     try {
-        const response = await fetch(`https://lichess.org/api/users/status?ids=${encodeURIComponent(currentPlayerName)}&withGameIds=true`);
+        const response = await fetch(`https://lichess.org/api/users/status?ids=${encodeURIComponent(currentPlayerName)}&withGameIds=true`, {
+            signal: AbortSignal.timeout(10000),
+        });
         if (!response.ok) throw new Error(`Status request failed: ${response.status}`);
         const body = await response.json();
         const gameId = body?.[0]?.playingId ?? null;
 
-        if (!gameId) return;
+        if (!gameId) {
+            if (currentGameId) closeGame();
+            return;
+        }
 
-        // A dropped websocket move invalidates the exact position. Resync rather than guessing a cue.
-        if (gameId === currentGameId && gamePosition?.needsSync && ws?.readyState === WebSocket.OPEN) {
+        // An open TCP connection can stop delivering game events. Lichess answers our pings with 0.
+        if (ws && performance.now() - lastSocketMessageAt >= SOCKET_TIMEOUT_MS) {
+            reconnectGame('heartbeat timed out');
+        }
+
+        // Recover even when the last move was dropped and no later move exposes the gap.
+        const now = performance.now();
+        const checkPosition = now - lastPositionUpdateAt >= SOCKET_TIMEOUT_MS && now - lastPositionCheckAt >= POSITION_CHECK_MS;
+        if (gameId === currentGameId && (gamePosition?.needsSync || checkPosition) && ws?.readyState === WebSocket.OPEN) {
+            lastPositionCheckAt = now;
             const playerName = currentPlayerName;
             const info = await getGameInfo(gameId, playerName);
             if (playerName !== currentPlayerName || gameId !== currentGameId) return;
+            // Exports can lag behind the live socket. Never roll a healthy board back to cached history.
             if (info.position.valid && info.position.ply < newestPly) return;
-            gamePosition = info.position;
-            setCurrentPosition(gamePosition.valid ? gamePosition.current : null);
-            requestBrainCue();
+            if (info.position.valid && (gamePosition?.needsSync || info.position.ply > newestPly || info.position.ended)) {
+                console.log('Resynchronized game:', gameId, 'ply:', info.position.ply);
+                gamePosition = info.position;
+                newestPly = info.position.ply;
+                replayedUntil = newestPly;
+                clearWaitTimers();
+                setCurrentPosition(gamePosition.current);
+                if (gamePosition.ended) finishGame();
+                else requestBrainCue();
+            }
         }
 
         if (gameId !== currentGameId) {
@@ -178,13 +205,18 @@ async function poll() {
         if (!ws || ws.readyState === WebSocket.CLOSED) {
             if (gameId !== currentGameId) finishGame();
             const playerName = currentPlayerName;
-            const { color, opponent, plies, position } = await getGameInfo(gameId, playerName);
+            let { color, opponent, plies, position } = await getGameInfo(gameId, playerName);
             if (playerName !== currentPlayerName) return;
+            if (gameId === currentGameId && gamePosition?.valid && position.valid && position.ply < gamePosition.ply) {
+                position = gamePosition;
+                plies = position.ply;
+            }
             currentGameId = gameId;
             currentPlayerColor = color;
             gamePosition = position;
             replayedUntil = plies;
             newestPly = plies;
+            lastPositionUpdateAt = lastPositionCheckAt = performance.now();
             console.log("player color:", currentPlayerColor, "opponent:", opponent.name, "plies so far:", plies);
             if (!cheat || cheat.gameId !== gameId) {
                 // Ring the bell as soon as the game is found, not when white gets around to the first move
@@ -200,7 +232,7 @@ async function poll() {
         }
 
         if (ws?.readyState === WebSocket.OPEN) {
-            ws.send("null");
+            ws.send('p');
         }
         requestBrainCue();
     } catch (error) {
@@ -225,6 +257,15 @@ function closeGame() {
     gamePosition = null;
     try { ws?.close(); } catch (ignored) { }
     ws = null;
+}
+
+function reconnectGame(reason) {
+    console.log('Reconnecting game feed:', reason);
+    clearWaitTimers();
+    setCurrentPosition(null);
+    const socket = ws;
+    ws = null; // Ignore late messages and searches from the old connection immediately.
+    socket?.terminate();
 }
 
 export function stopWatching() {
@@ -275,11 +316,13 @@ function connectToGame(gameId) {
         }
     });
     const socket = ws;
+    lastSocketMessageAt = performance.now();
 
     ws.on('error', console.error);
 
     ws.on('message', async (data) => {
         const receivedAt = performance.now();
+        if (socket === ws) lastSocketMessageAt = receivedAt;
         try {
             await handleMessage(gameId, JSON.parse(data), receivedAt, socket);
         } catch (error) {
@@ -294,6 +337,14 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     // console.log("MESSAGE:", body);
 
     const messageType = body.t;
+    if (messageType === 'batch') {
+        if (Array.isArray(body.d)) await Promise.all(body.d.map(message => handleMessage(gameId, message, receivedAt, socket)));
+        return;
+    }
+    if (messageType === 'resync' || messageType === 'reload') {
+        reconnectGame(messageType);
+        return;
+    }
     if (messageType === "endData" || messageType === "end") {
         const { winner, status } = body.d ?? {};
         const myColor = currentPlayerColor === "w" ? "white" : "black";
@@ -311,6 +362,7 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     if (messageType !== "move") return;
 
     const { fen, ply, uci, san, clock } = body.d ?? {};
+    lastPositionUpdateAt = receivedAt;
     newestPly = Math.max(newestPly, ply);
     const replayed = ply <= replayedUntil;
     const tracked = gamePosition?.observe({ fen, ply, san });
