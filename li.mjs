@@ -91,17 +91,19 @@ function stopPondering() {
 function prepareReply(position, analysis) {
     if (!callbacks.wantsBrainCue?.() || callbacks.wantsPonder?.() === false
         || currentPosition !== position || position.fen.split(' ')[1] === currentPlayerColor) return;
+    if (position.ponderPending) return;
     if (ponderingPosition === position && position.lastPonderAt !== undefined
         && performance.now() - position.lastPonderAt < 3000) return;
     const fen = positionAfterMove(position.fen, analysis?.bestmove);
     if (!fen) return;
     position.lastPonderAt = performance.now();
+    position.ponderPending = true;
     ponderingPosition = position;
     void sf.startPonder(fen).catch(error => {
         if (ponderingPosition === position) ponderingPosition = null;
         position.lastPonderAt = undefined;
         console.error('Starting ponder failed:', error);
-    });
+    }).finally(() => { position.ponderPending = false; });
 }
 
 // Keep evaluations ordered, and share each position's search with hand-and-brain mode.
