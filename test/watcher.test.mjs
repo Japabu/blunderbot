@@ -11,9 +11,10 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         import { EventEmitter } from 'node:events';
         export default class FakeSocket extends EventEmitter {
             static OPEN = 1; static CLOSED = 3;
-            constructor() { super(); this.readyState = 1; globalThis.brainTestSocket = this; }
-            send() {}
+            constructor() { super(); this.readyState = 1; this.sent = []; globalThis.brainTestSocket = this; }
+            send(data) { this.sent.push(data); }
             close() { this.readyState = 3; }
+            terminate() { this.close(); }
         }
     `;
     const hooks = registerHooks({ resolve(specifier, context, next) {
@@ -21,13 +22,17 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         return next(specifier, context);
     } });
     let tick;
+    let now = 0;
+    mock.method(performance, 'now', () => now);
     mock.method(globalThis, 'setInterval', fn => { tick = fn; return 1; });
     let gameMoves = '';
+    let exportedMoves;
+    let playing = true;
     mock.method(globalThis, 'fetch', async input => {
         const url = String(input);
-        if (url.includes('/api/users/status')) return Response.json([{ playingId: 'brain-test' }]);
+        if (url.includes('/api/users/status')) return Response.json([{ playingId: playing ? 'brain-test' : undefined }]);
         if (url.includes('/game/export/')) return Response.json({
-            moves: gameMoves, variant: 'standard', status: 'started', speed: 'blitz', clock: { initial: 0, increment: 0 },
+            moves: exportedMoves ?? gameMoves, variant: 'standard', status: 'started', speed: 'blitz', clock: { initial: 0, increment: 0 },
             players: { white: { user: { name: 'hand' }, rating: 1500 }, black: { aiLevel: 3 } },
         });
         throw Error('Unexpected fetch: ' + url);
@@ -60,7 +65,8 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     await tick(); await flush();
     assert.deepEqual(spoken, ['knight'], 'White must get a cue before making the first move');
     assert.equal(searches.length, 1, 'initial polling must share a single search');
-    const socket = globalThis.brainTestSocket;
+    let socket = globalThis.brainTestSocket;
+    assert.equal(socket.sent.at(-1), 'p', 'send the Lichess heartbeat instead of null');
     const board = new Chess();
     let ply = 0;
     async function emit(body) {
@@ -92,9 +98,51 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     assert.equal(searches.length, count, 'enabling mid-turn should reuse existing analysis');
     assert.equal(brain.position.ply, 6);
 
-    await move('a3'); // Black to move: no piece cue.
+    // A missed final update must recover without needing a later move to expose the gap.
+    exportedMoves = gameMoves;
+    await move('a3');
+    await move('a6', false);
+    now += 15000;
+    await emit(0); // Pongs keep the connection alive, but must not hide lost moves.
+    await tick(); await flush();
+    assert.equal(brain.position.ply, 7, 'a delayed export must never rewind the live board');
+    exportedMoves = undefined;
+    now += 15000;
+    await emit(0); await tick(); await flush();
+    assert.equal(brain.position.ply, 8, 'recover a lost move even while pongs still arrive');
+    assert.ok(brain.piece, 'speech must resume after recovering the missing opponent move');
+
+    const batch = [];
+    for (const san of ['b3', 'b6']) {
+        const result = board.move(san); ply++;
+        gameMoves += ' ' + san;
+        batch.push({ t: 'move', d: { fen: board.fen().split(' ')[0], ply, uci: result.lan, san } });
+    }
+    await emit({ t: 'batch', d: batch });
+    assert.equal(brain.position.ply, 10, 'batched moves must reach the brain');
+    assert.ok(brain.piece);
+
+    await emit({ t: 'resync' });
+    assert.equal(brain.position, null, 'a server resync invalidates the old cue immediately');
+    assert.equal(socket.readyState, 3);
+    exportedMoves = gameMoves.split(' ').slice(0, -2).join(' ');
+    await tick(); await flush();
+    assert.notEqual(globalThis.brainTestSocket, socket);
+    socket = globalThis.brainTestSocket;
+    assert.equal(brain.position.ply, 10, 'reconnecting must also reject a cached export behind the live board');
+    exportedMoves = undefined;
+    assert.ok(brain.piece, 'reconnecting must resume the current cue');
+
+    now += 12000;
+    await tick(); await flush();
+    assert.equal(socket.readyState, 3, 'an open socket without heartbeats must be replaced');
+    assert.notEqual(globalThis.brainTestSocket, socket);
+    socket = globalThis.brainTestSocket;
+    assert.ok(brain.piece);
+
+    await move('h3'); // Black to move: no piece cue.
     holdNext = true;
-    const pendingMove = move('a6');
+    const pendingMove = move('h6');
     await flush();
     assert.equal(typeof release, 'function');
     const beforeEnd = spoken.length;
@@ -102,4 +150,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     release(); await pendingMove; await flush();
     assert.equal(brain.position, null);
     assert.equal(spoken.length, beforeEnd, 'a search completing after game end must stay silent');
+    playing = false;
+    await tick();
+    assert.equal(socket.readyState, 3, 'status polling must close the finished game socket');
 });
