@@ -99,6 +99,8 @@ Enable `/config hand_and_brain:true`, then use `/lichess <username>` as usual. I
 
 The piece comes from Stockfish's best move at `HAND_AND_BRAIN_DEPTH` (default 12, never below `STOCKFISH_DEPTH`), checked against the exact legal position. This means there is an engine-preferred move with the named piece; it does not promise that every move with that piece is good, or that a lost position can be saved. The bot never announces the destination or which of two same-type pieces to use. Standard chess and standard-chess starting positions are supported; other variants and out-of-sync positions produce no piece cue. Use this for training where engine assistance is permitted.
 
+Pondering is enabled by default in hand-and-brain mode. During the opponent's turn, the bot predicts a legal reply and thinks ahead on the resulting position. If the reply matches, it reuses analysis that reached at least the configured brain depth; otherwise it searches the actual position. Use `/config ponder:false` to disable it or `/config ponder:true` to enable it. Background searches stop on game end or when the mode is disabled, and expire if the bot stops renewing them.
+
 This mode replaces normal commentary, good-move sounds, and miscellaneous effects with short prerecorded piece cues. You can also hear blunder, misinput, and thrown-win sounds with `/config bad_moves:true`, or mute them with `/config bad_moves:false`. Piece cues take priority over these effects. `/config hand_and_brain:false` restores your full normal sound preferences. The setting is saved per server and survives deployments. Current games, including White's first move, are supported; delayed analysis from an earlier turn is discarded.
 
 ## How It Works (The Magic Behind the Misery)

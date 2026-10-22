@@ -3,7 +3,7 @@ import WebSocket from 'ws';
 import { captureInfo, fullFen, isEnPassant, isKnightFork, isSnipe, pieceCount } from "./board.mjs";
 import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
-import { GamePosition } from './hand-and-brain.mjs';
+import { GamePosition, positionAfterMove } from './hand-and-brain.mjs';
 
 
 async function getGameInfo(gameId, playerName) {
@@ -80,6 +80,31 @@ const SLOW_SHARE = 0.15;
 const SCRAMBLE_SECONDS = 10;
 let cheat = null;
 let callbacks = {};
+let ponderingPosition = null;
+
+function stopPondering() {
+    if (!ponderingPosition) return;
+    ponderingPosition = null;
+    void sf.stopPonder().catch(error => console.error('Stopping ponder failed:', error));
+}
+
+function prepareReply(position, analysis) {
+    if (!callbacks.wantsBrainCue?.() || callbacks.wantsPonder?.() === false
+        || currentPosition !== position || position.fen.split(' ')[1] === currentPlayerColor) return;
+    if (position.ponderPending) return;
+    if (ponderingPosition === position && position.lastPonderAt !== undefined
+        && performance.now() - position.lastPonderAt < 3000) return;
+    const fen = positionAfterMove(position.fen, analysis?.bestmove);
+    if (!fen) return;
+    position.lastPonderAt = performance.now();
+    position.ponderPending = true;
+    ponderingPosition = position;
+    void sf.startPonder(fen).catch(error => {
+        if (ponderingPosition === position) ponderingPosition = null;
+        position.lastPonderAt = undefined;
+        console.error('Starting ponder failed:', error);
+    }).finally(() => { position.ponderPending = false; });
+}
 
 // Keep evaluations ordered, and share each position's search with hand-and-brain mode.
 let evalQueue = Promise.resolve();
@@ -93,6 +118,7 @@ function setCurrentPosition(snapshot) {
     if (gamePosition?.ended || cheat?.finished) snapshot = null;
     if (snapshot && currentPosition?.gameId === currentGameId && currentPosition.ply === snapshot.ply && currentPosition.fen === snapshot.fen) return;
     currentPosition = snapshot ? { gameId: currentGameId, playerColor: currentPlayerColor, fen: snapshot.fen, ply: snapshot.ply } : null;
+    if (!currentPosition) stopPondering();
     callbacks.onPosition?.(currentPosition);
 }
 
@@ -106,7 +132,10 @@ function analyzePosition(position) {
             // Enabling brain mode can replace an in-flight shallow commentary search.
             if (position.analysisPromise === pending) {
                 position.analysis = result;
-                if (currentPosition === position) callbacks.onPositionAnalysis?.(position, result);
+                if (currentPosition === position) {
+                    callbacks.onPositionAnalysis?.(position, result);
+                    prepareReply(position, result);
+                }
             }
             return result;
         }).catch(error => {
@@ -120,7 +149,14 @@ function analyzePosition(position) {
 
 export function requestBrainCue() {
     const position = currentPosition;
-    if (!callbacks.wantsBrainCue?.() || !position || position.fen.split(' ')[1] !== currentPlayerColor) return;
+    if (!callbacks.wantsBrainCue?.() || callbacks.wantsPonder?.() === false || !position) stopPondering();
+    if (!callbacks.wantsBrainCue?.() || !position) return;
+    if (position.fen.split(' ')[1] !== currentPlayerColor) {
+        if (callbacks.wantsPonder?.() === false) return;
+        if (position.analysis) prepareReply(position, position.analysis);
+        else void analyzePosition(position).catch(error => console.error('Ponder prediction failed:', error));
+        return;
+    }
     callbacks.onPosition?.(position);
     if (position.analysis && position.analysisForBrain) callbacks.onPositionAnalysis?.(position, position.analysis);
     else void analyzePosition(position).catch(error => console.error('Brain analysis failed:', error));

@@ -60,7 +60,8 @@ const commands = [
 		.addBooleanOption(option => option.setName('good_moves').setDescription('Good and great move sounds'))
 		.addBooleanOption(option => option.setName('bad_moves').setDescription('Blunder, misinput and thrown win sounds'))
 		.addBooleanOption(option => option.setName('misc').setDescription('Captures, results, clocks and all other sounds'))
-		.addBooleanOption(option => option.setName('hand_and_brain').setDescription('Standard chess: the bot names a piece with a strong move; you choose the move')),
+		.addBooleanOption(option => option.setName('hand_and_brain').setDescription('Standard chess: the bot names a piece with a strong move; you choose the move'))
+		.addBooleanOption(option => option.setName('ponder').setDescription('Hand and brain: think ahead during the opponent’s turn')),
 	new SlashCommandBuilder()
 		.setName('ping')
 		.setDescription('Replies with Ponggg!'),
@@ -278,6 +279,7 @@ function startSpectating(guild, channelId, username) {
 	connection.subscribe(player);
 	watchPlayer(username, {
 		wantsBrainCue: brainEnabled,
+		wantsPonder: () => settingsStore.get(activeGuildId).ponder,
 		onPosition: position => {
 			brain.setPosition(position);
 			if (!position && nowPlaying === 'hand_and_brain') player.stop();
@@ -358,6 +360,7 @@ async function handleInteraction(interaction) {
 				brain.reset();
 				requestBrainCue();
 			} else if (nowPlaying && nowPlaying !== 'hand_and_brain' && !enabled(nowPlaying)) player.stop();
+			if (previous.ponder !== settings.ponder) requestBrainCue();
 		}
 		await interaction.reply({
 			content: `Settings (saved for this server):\n${Object.entries(settings).map(([key, value]) => `${key}: **${value ? 'on' : 'off'}**`).join('\n')}`
