@@ -91,7 +91,8 @@ function stopPondering() {
 function prepareReply(position, analysis) {
     if (!callbacks.wantsBrainCue?.() || callbacks.wantsPonder?.() === false
         || currentPosition !== position || position.fen.split(' ')[1] === currentPlayerColor) return;
-    if (position.lastPonderAt !== undefined && performance.now() - position.lastPonderAt < 3000) return;
+    if (ponderingPosition === position && position.lastPonderAt !== undefined
+        && performance.now() - position.lastPonderAt < 3000) return;
     const fen = positionAfterMove(position.fen, analysis?.bestmove);
     if (!fen) return;
     position.lastPonderAt = performance.now();

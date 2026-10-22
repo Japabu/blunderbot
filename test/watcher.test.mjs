@@ -100,7 +100,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     assert.equal(ponders[0], predicted.fen(), 'ponder the exact legal position after the predicted reply');
     ponderEnabled = false; requestBrainCue(); await flush();
     assert.equal(ponderStops, 1, 'disabling pondering must stop background work immediately');
-    ponderEnabled = true; now += 3000; requestBrainCue(); await flush();
+    ponderEnabled = true; requestBrainCue(); await flush();
     assert.equal(ponders.length, 2, 'enabling mid-turn must prepare a reply');
     await move('Nf6');
     assert.equal(spoken.length, 2);
