@@ -83,9 +83,9 @@ let callbacks = {};
 
 // Keep evaluations ordered, and share each position's search with hand-and-brain mode.
 let evalQueue = Promise.resolve();
-const evaluate = fen => (evalQueue = evalQueue.catch(() => { }).then(async () => {
+const evaluate = (fen, brain = false) => (evalQueue = evalQueue.catch(() => { }).then(async () => {
     const startedAt = performance.now();
-    const result = await sf.evaluate(fen);
+    const result = await sf.evaluate(fen, { brain });
     return { ...result, startedAt, finishedAt: performance.now() };
 }));
 
@@ -96,17 +96,24 @@ function setCurrentPosition(snapshot) {
     callbacks.onPosition?.(currentPosition);
 }
 
-// Both commentary and the brain share the same search, including when the mode is enabled mid-turn.
+// Share searches, upgrading shallow commentary analysis when brain mode is enabled mid-turn.
 function analyzePosition(position) {
-    if (!position.analysisPromise) {
-        position.analysisPromise = evaluate(position.fen).then(result => {
-            position.analysis = result;
-            if (currentPosition === position) callbacks.onPositionAnalysis?.(position, result);
+    const brain = !!callbacks.wantsBrainCue?.() && position.fen.split(' ')[1] === currentPlayerColor;
+    if (!position.analysisPromise || (brain && !position.analysisForBrain)) {
+        position.analysisForBrain = brain;
+        position.analysis = null;
+        const pending = evaluate(position.fen, brain).then(result => {
+            // Enabling brain mode can replace an in-flight shallow commentary search.
+            if (position.analysisPromise === pending) {
+                position.analysis = result;
+                if (currentPosition === position) callbacks.onPositionAnalysis?.(position, result);
+            }
             return result;
         }).catch(error => {
-            position.analysisPromise = null;
+            if (position.analysisPromise === pending) position.analysisPromise = null;
             throw error;
         });
+        position.analysisPromise = pending;
     }
     return position.analysisPromise;
 }
@@ -115,7 +122,7 @@ export function requestBrainCue() {
     const position = currentPosition;
     if (!callbacks.wantsBrainCue?.() || !position || position.fen.split(' ')[1] !== currentPlayerColor) return;
     callbacks.onPosition?.(position);
-    if (position.analysis) callbacks.onPositionAnalysis?.(position, position.analysis);
+    if (position.analysis && position.analysisForBrain) callbacks.onPositionAnalysis?.(position, position.analysis);
     else void analyzePosition(position).catch(error => console.error('Brain analysis failed:', error));
 }
 
