@@ -2,6 +2,30 @@ import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import sf from '../sf.mjs';
 
+test('ponder controls reach the service in order and failures do not block later searches', async t => {
+    const previous = process.env.STOCKFISH_SERVER_URL;
+    process.env.STOCKFISH_SERVER_URL = 'http://engine.test/';
+    t.after(() => {
+        mock.restoreAll();
+        if (previous === undefined) delete process.env.STOCKFISH_SERVER_URL;
+        else process.env.STOCKFISH_SERVER_URL = previous;
+    });
+    const calls = [];
+    mock.method(globalThis, 'fetch', async (url, options) => {
+        calls.push({ url, options });
+        if (options.method === 'POST') return new Response('unavailable', { status: 503 });
+        if (options.method === 'DELETE') return Response.json({ pondering: false });
+        return Response.json({ bestmove: 'g1f3', score: 25, depth: 14, ponderHit: true });
+    });
+    await assert.rejects(sf.startPonder('expected fen'), /503/);
+    await sf.stopPonder();
+    const result = await sf.evaluate('actual fen', { brain: true });
+    assert.equal(result.ponderHit, true);
+    assert.deepEqual(calls.map(({ options }) => options.method), ['POST', 'DELETE', undefined]);
+    assert.equal(calls[0].url, 'http://engine.test/ponder');
+    assert.deepEqual(JSON.parse(calls[0].options.body), { fen: 'expected fen' });
+});
+
 test('brain searches go deeper than normal commentary searches', async t => {
     t.after(() => mock.restoreAll());
     const depths = [];

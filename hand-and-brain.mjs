@@ -3,6 +3,13 @@ import { Chess } from 'chess.js';
 export const PIECE_NAMES = { p: 'pawn', n: 'knight', b: 'bishop', r: 'rook', q: 'queen', k: 'king' };
 const REPEAT_MS = 3000;
 
+export function positionAfterMove(fen, bestmove) {
+    if (!pieceForBestMove(fen, bestmove)) return null;
+    const board = new Chess(fen);
+    board.move({ from: bestmove.slice(0, 2), to: bestmove.slice(2, 4), promotion: bestmove[4] });
+    return board.fen();
+}
+
 // Return only a piece type. The full move must never be announced to the hand.
 export function pieceForBestMove(fen, bestmove) {
     if (!/^[a-h][1-8][a-h][1-8][qrbn]?$/.test(bestmove ?? '')) return null;

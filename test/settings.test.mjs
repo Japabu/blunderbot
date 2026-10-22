@@ -52,9 +52,12 @@ test('hand-and-brain is off by default and persists independently of sound prefe
 		const file = join(dir, 'settings.json');
 		const store = new SettingsStore(file, BOT_DEFAULTS);
 		assert.equal(store.get('one').hand_and_brain, false);
-		store.update('one', { dimitri: false, misc: false, hand_and_brain: true });
+		assert.equal(store.get('one').ponder, true);
+		store.update('one', { dimitri: false, misc: false, hand_and_brain: true, ponder: false });
 		const resumed = new SettingsStore(file, BOT_DEFAULTS);
 		assert.equal(resumed.get('one').hand_and_brain, true);
+		assert.equal(resumed.get('one').ponder, false);
+		assert.equal(resumed.get('two').ponder, true);
 		assert.equal(resumed.get('two').hand_and_brain, false);
 		resumed.update('one', { hand_and_brain: false });
 		assert.equal(resumed.get('one').dimitri, false);
