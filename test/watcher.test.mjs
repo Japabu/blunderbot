@@ -26,29 +26,37 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     mock.method(performance, 'now', () => now);
     mock.method(globalThis, 'setInterval', fn => { tick = fn; return 1; });
     let gameMoves = '';
+    let gameId = 'brain-test', initialFen, playerColor = 'w';
+    const queenAttacked = 'r4k1r/pbp2p2/2p1pp2/6bp/2BqR3/P1NP2N1/1PP2PPP/R2Q2K1 b - - 10 16';
     let exportedMoves;
     let playing = true;
     mock.method(globalThis, 'fetch', async input => {
         const url = String(input);
-        if (url.includes('/api/users/status')) return Response.json([{ playingId: playing ? 'brain-test' : undefined }]);
+        if (url.includes('/api/users/status')) return Response.json([{ playingId: playing ? gameId : undefined }]);
         if (url.includes('/game/export/')) return Response.json({
-            moves: exportedMoves ?? gameMoves, variant: 'standard', status: 'started', speed: 'blitz', clock: { initial: 0, increment: 0 },
-            players: { white: { user: { name: 'hand' }, rating: 1500 }, black: { aiLevel: 3 } },
+            moves: exportedMoves ?? gameMoves, initialFen, variant: initialFen ? 'fromPosition' : 'standard', status: 'started', speed: 'blitz', clock: { initial: 0, increment: 0 },
+            players: {
+                [playerColor === 'w' ? 'white' : 'black']: { user: { name: 'hand' }, rating: 1500 },
+                [playerColor === 'w' ? 'black' : 'white']: { aiLevel: 3 },
+            },
         });
         throw Error('Unexpected fetch: ' + url);
     });
     const searches = [];
     let holdNext = false, release;
-    mock.method(sf, 'evaluate', async fen => {
+    mock.method(sf, 'evaluate', async (fen, { brain = false } = {}) => {
         const board = new Chess(fen);
         const moves = board.moves({ verbose: true });
         const selected = moves.find(move => move.lan === 'g1f3') ?? moves.find(move => move.piece === 'p') ?? moves[0];
-        searches.push(fen);
+        searches.push({ fen, brain });
         if (holdNext) {
             holdNext = false;
             await new Promise(resolve => { release = resolve; });
         }
-        return { score: 20, depth: 8, bestmove: selected?.lan ?? '(none)' };
+        // Results reproduced on the Pi for YrMa2KBQ after 16.Re4: depth 8 picks c5,
+        // while depths 12, 14 and 16 choose Qd8 to save the attacked queen.
+        const bestmove = fen === queenAttacked ? (brain ? 'd4d8' : 'c6c5') : selected?.lan ?? '(none)';
+        return { score: 20, depth: brain ? 12 : 8, bestmove };
     });
     const { watchPlayer, stopWatching, requestBrainCue } = await import('../li.mjs');
     const spoken = [];
@@ -56,15 +64,17 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     const brain = new HandAndBrain({ enabled: () => enabled, speak: piece => spoken.push(piece) });
     t.after(() => { stopWatching(); hooks.deregister(); mock.restoreAll(); delete globalThis.brainTestSocket; });
     const flush = () => new Promise(setImmediate);
-    await watchPlayer('hand', {
+    const callbacks = {
         wantsBrainCue: () => enabled,
         onPosition: position => brain.setPosition(position),
         onPositionAnalysis: (position, result) => brain.analyzed(position, result),
         onMove: move => brain.moved(move),
-    });
+    };
+    await watchPlayer('hand', callbacks);
     await tick(); await flush();
     assert.deepEqual(spoken, ['knight'], 'White must get a cue before making the first move');
     assert.equal(searches.length, 1, 'initial polling must share a single search');
+    assert.equal(searches[0].brain, true, 'piece cues must use stronger searches');
     let socket = globalThis.brainTestSocket;
     assert.equal(socket.sent.at(-1), 'p', 'send the Lichess heartbeat instead of null');
     const board = new Chess();
@@ -153,4 +163,24 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     playing = false;
     await tick();
     assert.equal(socket.readyState, 3, 'status polling must close the finished game socket');
+
+    // Regression for the user's reported queen attack, including enabling mid-search.
+    stopWatching();
+    gameId = 'queen-attack'; initialFen = queenAttacked; playerColor = 'b';
+    gameMoves = ''; playing = true; enabled = false;
+    await watchPlayer('hand', callbacks);
+    await tick(); await flush();
+    socket = globalThis.brainTestSocket;
+    holdNext = true;
+    const shallow = emit({ t: 'move', d: { fen: queenAttacked.split(' ')[0], ply: 31, san: 'Re4', uci: 'e1e4' } });
+    await flush();
+    enabled = true;
+    const beforeUpgrade = spoken.length;
+    requestBrainCue();
+    release(); await shallow; await flush();
+    assert.deepEqual(spoken.slice(beforeUpgrade), ['queen'], 'a shallow pawn result must not escape while upgrading the search');
+    assert.deepEqual(searches.slice(-2).map(search => search.brain), [false, true]);
+    const afterUpgrade = searches.length;
+    requestBrainCue(); await flush();
+    assert.equal(searches.length, afterUpgrade, 'reuse the stronger result for the same position');
 });

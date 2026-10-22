@@ -1,9 +1,10 @@
 const DEPTH = parseInt(process.env.STOCKFISH_DEPTH) || 8;
+const BRAIN_DEPTH = Math.max(DEPTH, parseInt(process.env.HAND_AND_BRAIN_DEPTH) || 12);
 
 // Returns { score, bestmove, depth } for the side to move in fen
-async function evaluate(fen) {
+async function evaluate(fen, { brain = false } = {}) {
     const params = new URLSearchParams();
-    params.set("depth", DEPTH);
+    params.set("depth", brain ? BRAIN_DEPTH : DEPTH);
     params.set("fen", fen);
     const url = process.env.STOCKFISH_SERVER_URL + "?" + params.toString();
     // console.log("Making request:", url);
