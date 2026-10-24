@@ -283,6 +283,7 @@ function startSpectating(guild, channelId, username) {
 		onPosition: position => {
 			lastPosition = position;
 			brain.setPosition(position);
+			// End waiting cues without interrupting a result reaction already playing.
 			if (!position && (nowPlaying === 'hand_and_brain' || WAITING_SLOTS.has(nowPlaying) || nowPlaying === 'time_scramble')) player.stop(true);
 		},
 		onPositionAnalysis: (position, analysis) => brain.analyzed(position, analysis),
@@ -321,7 +322,6 @@ function startSpectating(guild, channelId, username) {
 			play('won_game', { gameOver: true });
 		},
 		onGameEnd: (opponent, summary) => {
-			player.stop(true); // Also stop waiting audio when result sounds are muted or empty.
 			console.log('Game report:', formatReport(opponent, summary));
 		},
 	});
