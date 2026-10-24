@@ -202,12 +202,15 @@ async function poll() {
     if (!currentPlayerName || polling) return;
     polling = true;
     try {
+        const polledPlayer = currentPlayerName;
         const response = await fetch(`https://lichess.org/api/users/status?ids=${encodeURIComponent(currentPlayerName)}&withGameIds=true`, {
             signal: AbortSignal.timeout(10000),
         });
         if (!response.ok) throw new Error(`Status request failed: ${response.status}`);
         const body = await response.json();
+        if (polledPlayer !== currentPlayerName) return;
         const gameId = body?.[0]?.playingId ?? null;
+        callbacks.onGameActivity?.(!!gameId && !(gameId === currentGameId && cheat?.finished));
 
         if (!gameId) {
             if (currentGameId) closeGame();
@@ -288,6 +291,7 @@ async function poll() {
 function finishGame() {
     if (gamePosition) gamePosition.ended = true;
     setCurrentPosition(null);
+    callbacks.onGameActivity?.(false);
     if (!cheat || cheat.finished) return;
     cheat.finished = true;
     callbacks.onGameEnd?.(cheat.opponent, cheat.summary());

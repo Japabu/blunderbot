@@ -12,6 +12,7 @@ import { SettingsStore } from './settings.mjs';
 import { BOT_DEFAULTS, soundEnabled } from './sound-settings.mjs';
 import { HandAndBrain, PIECE_NAMES } from './hand-and-brain.mjs';
 import { watchVoiceConnection } from './voice.mjs';
+import { InactivityTimer } from './inactivity.mjs';
 
 const settingsStore = new SettingsStore('./data/settings.json', BOT_DEFAULTS);
 let activeGuildId = null;
@@ -243,6 +244,21 @@ function clearSession() {
 	rmSync(SESSION_FILE, { force: true });
 }
 
+const inactivity = new InactivityTimer(() => {
+	console.log('Disconnecting from voice after inactivity');
+	stopSpectating();
+});
+
+function stopSpectating() {
+	inactivity.stop();
+	stopWatching();
+	brain.reset();
+	player.stop();
+	clearSession();
+	getVoiceConnection(activeGuildId)?.destroy();
+	activeGuildId = null;
+}
+
 async function resumeSession() {
 	if (!existsSync(SESSION_FILE)) return;
 	try {
@@ -256,6 +272,8 @@ async function resumeSession() {
 }
 
 function startSpectating(guild, channelId, username) {
+	if (activeGuildId && activeGuildId !== guild.id) stopSpectating();
+	inactivity.start();
 	brain.reset();
 	player.stop();
 	activeGuildId = guild.id;
@@ -276,6 +294,7 @@ function startSpectating(guild, channelId, username) {
 	watchPlayer(username, {
 		wantsBrainCue: brainEnabled,
 		wantsPonder: () => settingsStore.get(activeGuildId).ponder,
+		onGameActivity: active => inactivity.activity(active),
 		onPosition: position => {
 			brain.setPosition(position);
 			if (!position && nowPlaying === 'hand_and_brain') player.stop();
@@ -299,6 +318,7 @@ function startSpectating(guild, channelId, username) {
 		onMoment: moment => play(moment),
 		// Cheat reports only go to the log; the voice channel just hears sus (and X-Files once it's very sus)
 		onGameStart: opponent => {
+			inactivity.activity(true);
 			if (opponent.account?.tosViolation) play('sus');
 		},
 		onCheatAlert: (opponent, summary) => {
@@ -377,11 +397,7 @@ async function handleInteraction(interaction) {
 		await interaction.reply("Spectating lichess player: " + username + (brainEnabled() ? '\nHand and brain is on: wait for a piece name, then choose a move with that piece.' : ''));
 	} else if (interaction.commandName === "stop") {
 		const playerName = getCurrentPlayerName();
-		stopWatching();
-		brain.reset();
-		player.stop();
-		clearSession();
-		getVoiceConnection(interaction.guildId)?.destroy();
+		stopSpectating();
 		await interaction.reply(playerName ? "Stopped spectating lichess player: " + playerName : "Wasn't spectating anyone");
 	}
 }
