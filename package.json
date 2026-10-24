@@ -5,7 +5,8 @@
   "main": "index.mjs",
   "scripts": {
     "test": "node --test",
-    "start": "node index.mjs"
+    "start": "node index.mjs",
+    "config": "node config-server.mjs"
   },
   "author": "",
   "license": "ISC",

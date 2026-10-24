@@ -19,32 +19,38 @@ Every slot is a folder in `sounds/` and a random clip from it plays (never the s
 
 Board effects (captures, forks, en passant, ...) or Komarov announcing the move play the instant a move arrives. Win/loss reactions wait for Lichess to confirm the result and play once. The engine's verdict comes a few hundred milliseconds later and only cuts in when it has something better to say, like a blunder.
 
-### When You Make a Good Move:
-- 💰 **good_move** (+150): Price is Right, "Okay let's go", anime wow, Owen Wilson *wow*
-- 📯 **great_move** (+300): Airhorn, MLG airhorn, Hallelujah
-- 🦔 **fast_good_move**: a good move played instantly gets Sonic's *gotta go fast*
+### Move quality
 
-### When You Blunder:
-- 🎮 **blunder_tiny** (-50): Minecraft damage, huh cat
-- 😤 **blunder_small** (-100): Bruh, Taco Bell bong
-- 🤕 **blunder_medium** (-150): Roblox oof, SpongeBob fail
-- 💨 **blunder_big** (-300): Wet fart, Windows XP shutdown
-- 💥 **blunder_queen** (-800): Vine boom
-- ⌨️ **misinput**: a big blunder played within a second. *IT WAS A MISINPUT, CALM DOWN*
-- 😩 **threw_win**: you were clearly winning (+5) and now you're not: faah, Curb Your Enthusiasm
+Moves are graded against the engine evaluation immediately before that move, from the mover's perspective. An opponent's blunder no longer earns a positive reaction by itself. The old comparison against the watched player's previous turn and the fast-good-move category have been removed.
+
+The bands follow [Chess.com's published classifications](https://support.chess.com/en/articles/8572705-how-are-moves-classified-what-is-a-blunder-or-brilliant-etc), using [Lichess's public win-chance conversion](https://lichess.org/page/accuracy), `1 / (1 + exp(-0.00368208 * cp))`. This is a transparent approximation, not Chess.com's private rating-adjusted expected-points model. No extra searches are needed. Great/pivotal and brilliant/sacrifice detection are not implemented; the legacy `great_move` sound pool now serves **Best move**.
+
+| Grade | Winning chances lost | Sound pool |
+| --- | --- | --- |
+| Best | Engine's chosen move, under 2 percentage points lost | great_move |
+| Excellent | Under 2 points | excellent_move (defaults to good_move clips) |
+| Good | 2–5 points | good_move |
+| Inaccuracy | 5–10 points | blunder_tiny |
+| Mistake | 10–20 points | blunder_small |
+| Blunder | 20–30 points | blunder_medium |
+| Big blunder | 30–45 points | blunder_big |
+| Huge blunder | 45+ points | blunder_queen |
+
+A blunder played within one second uses `misinput`. Losing at least 10 percentage points while going from +5 or better to +1 or worse uses `threw_win` (unless it is an instant blunder). Missing/stale before-position analysis never produces a guessed grade.
 
 ### Special Moments:
 - 🔔 **game_start**: Boxing bell, as soon as the bot finds the new game
-- 🌸 **en_passant**: Anime ahh (by anyone, because it's always an event)
+- 🌸 **en_passant**: Anime ahh (either player, according to its rule)
 - 🍄 **promotion**: Mario power-up, and 🏃 **knight_promotion** (anyone): *why are you running?*
-- ✋ **check_spam**: your third check in a row: *stop, stop, he's already dead*
-- 🤷 **opponent_blunder**: they hang something big: *oh no... anyway*
+- ✋ **check_spam**: a player’s third check in a row: *stop, stop, he's already dead*
 - 🏆 **won_game**: a random win reaction: Gran Turismo 4's failed-test music, GTA mission passed, FF7 victory fanfare, We Are the Champions, or *to be continued*. Plays once per confirmed win, including checkmate, resignation, timeout, or abandonment; follows `misc` and also works in hand-and-brain mode. Never repeats the previous win clip immediately.
-- 💔 **lost_game**: a random loss reaction: *Du bist gut genug*, Emotional Damage, *YOU DIED*, coffin dance, Mario death, or Käsiger Michael. Picks one clip per confirmed loss without repeating the previous clip. Covers checkmate, resignation, running out of time, and abandonment; follows `misc` and also works in hand-and-brain mode. This game-result sound can play after the opponent's final move; ordinary opponent moves still get only Dimitri and piece cues.
+- 💔 **lost_game**: a random loss reaction: *Du bist gut genug*, Emotional Damage, *YOU DIED*, coffin dance, Mario death, or Käsiger Michael. Picks one clip per confirmed loss without repeating the previous clip. Covers checkmate, resignation, running out of time, and abandonment; follows `misc` and also works in hand-and-brain mode. This game-result sound can play after the opponent's final move; special-move sounds follow their separate player rules.
 - 🎺 **stalemated**: you stalemated them: sad trombone, *directed by Robert B. Weide*
 
 ### Captures (no engine needed, and they beat the good/bad move sound unless it's a real blunder):
-- 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; king attacks, equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Plays immediately and takes priority over engine feedback; follows `misc` and the usual hand-and-brain sound rules. Opponent moves do not trigger it.
+- 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; king attacks, equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Plays immediately and takes priority over engine feedback; follows `misc` and the usual hand-and-brain sound rules. The control room chooses your moves, opponent moves, or both; default is both.
+- 🦴 **discovery**: moving a blocker uncovers a new legal attack by an unmoved bishop, rook, or queen (including discovered check). Uses the first five seconds of [xQc’s fossil clip](https://www.youtube.com/watch?v=knxrshWgEDM). Takes priority over reload.
+- **castle** and **capture**: dedicated configurable triggers, disabled until a sound is assigned in the control room.
 - 😭 **lost_queen**: they take your queen: *NOOOOO*, and 👋 **queen_trade**: *bye, have a great time* / sayonara
 - 🚪 **king_capture**: the king takes something: *I am the one who knocks*
 - 🍴 **fork**: a knight attacks the king and the queen or a rook at once: *surprise*
@@ -54,7 +60,7 @@ Board effects (captures, forks, en passant, ...) or Komarov announcing the move 
 - 🎵 **opponent_slow**: they've been thinking for 15% of the base time: Jeopardy, elevator music, snoring (stops as soon as they move)
 - 👨‍🍳 **you_slow**: you're the one thinking that long: *let him cook*
 - 🎷 **time_scramble**: both clocks under 10 seconds: Yakety Sax (only big moments interrupt it)
-- 🤨 **sus** / 👽 **very_sus**: your opponent is playing suspiciously well / *very* suspiciously well (see below)
+- 🤨 **sus**: a Lichess account flag at game start; ongoing suspicion is logged only (see below)
 
 ## Setup (If You Dare)
 
@@ -81,6 +87,16 @@ Board effects (captures, forks, en passant, ...) or Komarov announcing the move 
    # Let the roasting begin
    ```
 
+## Local sound control room
+
+Run `npm run config` on the Mac and open **http://127.0.0.1:8769/**. The Mac uses the existing `ssh pi` connection to call `control-cli.mjs` inside the running container. No Pi HTTP ports or Discord credentials are exposed. Keep this process running while configuring the bot.
+
+Choose a Discord server, toggle triggers, choose which player can trigger a special move, preview any shipped clip at a comfortable volume, and build random sound pools. Upload MP3/WAV/Ogg (maximum 10 MB; first 30 seconds) to convert locally to Discord-ready Opus and store it durably on the Pi. Empty/default-off capture and castle triggers can be activated after choosing clips. Preview volume affects the website only.
+
+**Save to Blunderbot** updates the live per-server settings; no bot restart is needed. The website rejects stale saves if another editor or Discord changed the same server's settings. Unsaved edits are labelled and protected when leaving the page. Uploads add library assets; they become active only after saving the event pool.
+
+`data/sound-rules.json` stores enabled/player/pool overrides, `data/custom-sounds.json` indexes uploads, and `data/custom/` keeps their audio. All are on the existing persistent volume and survive deployments. The bot watches settings changes so hand-and-brain and mute changes take effect during a game. The local web bridge accepts only loopback requests, checks Host/Origin, validates every sound ID, and never takes a remote shell command from the browser.
+
 ## Commands
 
 - `/config` — Show saved sound settings for this server. Pass any combination of `dimitri`, `good_moves`, `bad_moves`, and `misc` as `true` or `false` to change them immediately. All four default to on. For example, `/config dimitri:false good_moves:false` leaves blunders and other moments enabled. `misc` covers captures, game results, clock sounds, and suspicion alerts; `bad_moves` covers the blunder tiers, misinput, and thrown wins. Settings survive restarts in `data/settings.json`, alongside the saved session.
@@ -90,7 +106,7 @@ Board effects (captures, forks, en passant, ...) or Komarov announcing the move 
 
 Blunderbot leaves voice after five minutes without an active Lichess game, matching Paddibot. Set `IDLE_TIMEOUT_MINUTES` to change this. Active games, including long thinks, keep it connected. Leaving due to inactivity stops spectating and clears the saved session; use `/lichess` to start again. Unexpected voice disconnections are retried automatically while spectating.
 
-Sound effects react only to your moves. After an opponent move, only Dimitri commentary plays; hand-and-brain piece cues still announce your turn. A new move stops the previous clip, and delayed analysis cannot play a reaction for an older move.
+Move-quality effects judge only your moves. Special-move effects independently choose your moves, the opponent’s, or both (default). Game and clock events do not depend on who moved last. Hand-and-brain piece cues still announce your turn. A new move stops the previous clip, and delayed analysis cannot play a reaction for an older move.
 
 ## Hand and brain
 
@@ -110,18 +126,18 @@ This mode replaces normal commentary, good-move sounds, and miscellaneous effect
 
 ## Dmitri Komarov Commentary
 
-Every move that doesn't get a meme sound (yours and your opponent's) gets GM Dmitri Komarov announcing it instead: *"Knight c3!"*, captures by their square, castling, checks, plus his lines for draws and your opponent resigning. Only his move- and square-specific lines are used, never the random filler, and he never talks over another sound. The ~1400 clips come from Vincent Simard's [dmitlichess](https://github.com/vincentsimard/dmitlichess) extension (WTFPL), levelled a bit quieter than the memes, in `commentary/komarov/`. When the bot joins a game that's already running, the moves Lichess replays on connect stay silent.
+Every move that doesn't get a meme sound (yours and your opponent's) gets GM Dmitri Komarov announcing it instead: *"Knight c3!"*, captures by their square, castling, checks, plus his draw lines. Resignations use the confirmed win/loss reaction. Only his move- and square-specific lines are used, never the random filler, and he never talks over another sound. The ~1400 clips come from Vincent Simard's [dmitlichess](https://github.com/vincentsimard/dmitlichess) extension (WTFPL), levelled a bit quieter than the memes, in `commentary/komarov/`. When the bot joins a game that's already running, the moves Lichess replays on connect stay silent.
 
 ## Cheater Detection (Is Your Opponent Suspiciously Good?)
 
-The bot also judges your opponent. Every opponent move after the opening is scored by Stockfish (skipping positions that are already decided), and a *sus* sound plays in voice when they look engine-assisted (and the X-Files theme when it gets worse):
+The bot also judges your opponent. Every opponent move after the opening is scored by Stockfish (skipping positions that are already decided), and logs suspicion when they look engine-assisted:
 
 - **Too accurate for their rating**: average centipawn loss compared to what's normal at their rating *and* time control (bullet players blunder more than rapid players at the same rating)
 - **Engine top move** way too often
 - **Robotic move times**: humans premove recaptures and burn clock on critical moves, engine copiers take the same few seconds for everything (ignored in bullet and time scrambles)
 - **Throwaway account** (< 30 days old or < 50 games) nudges it further, and a Lichess ToS mark plays *sus* at game start
 
-It plays *sus* when the verdict turns suspicious and the X-Files theme if it turns very suspicious. No chat spam: the numbers (ACPL, expected ACPL, engine match %, think-time CV, verdict) only go to the bot's log. The thresholds come from replaying real games of normal players and of Lichess-marked accounts (~5% of honest games trip it), so treat *sus* as vibes, not proof. `STOCKFISH_DEPTH` raises the search depth if your hardware can take it.
+Suspicion escalations are currently logged only. The `sus` sound is connected to a Lichess account flag at game start; the `very_sus` and `opponent_blunder` pools have no live trigger. No chat spam: the numbers (ACPL, expected ACPL, engine match %, think-time CV, verdict) only go to the bot's log. The thresholds come from replaying real games of normal players and of Lichess-marked accounts (~5% of honest games trip it), so treat *sus* as vibes, not proof. `STOCKFISH_DEPTH` raises the search depth if your hardware can take it.
 
 `/lichess` survives bot restarts: the spectated player and voice channel are kept in `data/session.json`.
 

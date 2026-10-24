@@ -74,7 +74,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         onPositionAnalysis: (position, result) => brain.analyzed(position, result),
         onMove: move => brain.moved(move),
         onMoveInstant: move => instant.push(move),
-        onMoveDelta: (delta, info) => deltas.push(info),
+        onMoveDelta: (delta, info) => deltas.push({ ...info, delta }),
         onGameLoss: () => losses.push({ gameId, brainPosition: brain.position }),
         onGameWin: () => wins.push({ gameId, brainPosition: brain.position }),
     };
@@ -106,6 +106,8 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     assert.equal(spoken.length, 2);
     assert.equal(spoken.at(-1), pieceForBestMove(board.fen(), board.moves({ verbose: true }).find(move => move.piece === 'p').lan));
     await move('Nc3');
+    assert.equal(deltas.at(-1).delta, -40, 'compare the adjacent before/after positions, not the previous own move');
+    assert.equal(deltas.at(-1).bestmove.length >= 4, true);
     assert.equal(spoken.at(-1), 'wrong_piece');
 
     await move('Nc6', false); // Simulate losing one websocket update.
@@ -269,5 +271,5 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     const opponentMove = opponentBoard.move('e5');
     await emit({ t: 'move', d: { fen: opponentBoard.fen().split(' ')[0], ply: 2, san: opponentMove.san, uci: opponentMove.lan } });
     assert.equal(instant.at(-1).mine, false);
-    assert.notEqual(instant.at(-1).flavor, 'attack_up', 'opponent threats do not select the reload effect');
+    assert.equal(instant.at(-1).flavor, 'attack_up', 'opponent special moves are detected for independently configured sound rules');
 });

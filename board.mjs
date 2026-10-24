@@ -15,6 +15,38 @@ function higherPieceAttacks(fen, color) {
         .map(move => `${move.from}:${move.to}`));
 }
 
+export function higherPieceAttack(beforeFen, afterFen, color, movedFrom, movedTo) {
+    if (!beforeFen || !afterFen || !['w', 'b'].includes(color)) return null;
+    try {
+        const sliderAttacks = fen => {
+            const fields = fen.split(' '); fields[1] = color; fields[3] = '-';
+            const board = new Chess(fields.join(' '));
+            const attacks = board.moves({ verbose: true }).filter(move => move.captured && ['b', 'r', 'q'].includes(move.piece))
+                .map(move => `${move.from}:${move.to}`);
+            const king = board.board().flat().find(piece => piece?.type === 'k' && piece.color !== color);
+            if (king) for (const from of board.attackers(king.square, color)) {
+                if (['b', 'r', 'q'].includes(board.get(from)?.type)) attacks.push(`${from}:${king.square}`);
+            }
+            return new Set(attacks);
+        };
+        const oldLines = sliderAttacks(beforeFen);
+        const beforeBoard = new Chess(beforeFen);
+        const discovery = [...sliderAttacks(afterFen)].some(attack => {
+            const [from, to] = attack.split(':');
+            if (!movedFrom || from === movedTo || oldLines.has(attack) || !['b', 'r', 'q'].includes(beforeBoard.get(from)?.type)) return false;
+            const file = square => square.charCodeAt(0), rank = square => Number(square[1]);
+            const df = file(to) - file(from), dr = rank(to) - rank(from);
+            const mf = file(movedFrom) - file(from), mr = rank(movedFrom) - rank(from);
+            // The departing piece must actually have been between this slider and its target.
+            return df * mr === dr * mf && Math.sign(mf) === Math.sign(df) && Math.sign(mr) === Math.sign(dr)
+                && Math.max(Math.abs(mf), Math.abs(mr)) < Math.max(Math.abs(df), Math.abs(dr));
+        });
+        if (discovery && movedFrom) return 'discovery';
+        const before = higherPieceAttacks(beforeFen, color);
+        return [...higherPieceAttacks(afterFen, color)].some(attack => !before.has(attack)) ? 'attack_up' : null;
+    } catch { return null; }
+}
+
 // Compare exact history snapshots so unrelated quiet moves do not replay an old threat.
 // Legal captures exclude pinned attackers and king moves onto protected squares.
 export function hasNewHigherPieceAttack(beforeFen, afterFen, color) {

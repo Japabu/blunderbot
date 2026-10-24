@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 // Only known boolean settings are read, so old files remain compatible as settings are added.
@@ -13,9 +13,21 @@ export class SettingsStore {
 			if (error.code !== 'ENOENT') throw error;
 			this.guilds = {};
 		}
+		this.stamp = null;
 	}
 
 	get(guildId) {
+		// The local control room writes this same durable file. Read it again so edits
+		// apply on the next event without restarting Discord or losing a game.
+		try {
+			const stamp = statSync(this.path).mtimeMs;
+			if (stamp !== this.stamp) {
+				const guilds = JSON.parse(readFileSync(this.path, 'utf8'));
+				if (!guilds || typeof guilds !== 'object' || Array.isArray(guilds)) throw Error('Expected a settings object');
+				this.guilds = guilds; this.stamp = stamp;
+			}
+		}
+		catch (error) { if (error.code !== 'ENOENT') throw error; }
 		return Object.fromEntries(Object.entries(this.defaults).map(([key, value]) =>
 			[key, typeof this.guilds[guildId]?.[key] === 'boolean' ? this.guilds[guildId][key] : value]));
 	}
@@ -27,9 +39,11 @@ export class SettingsStore {
 		}
 		const guilds = { ...this.guilds, [guildId]: next };
 		mkdirSync(dirname(this.path), { recursive: true });
-		writeFileSync(`${this.path}.tmp`, JSON.stringify(guilds, null, 2));
-		renameSync(`${this.path}.tmp`, this.path);
+		const temporary = `${this.path}.${process.pid}.tmp`;
+		writeFileSync(temporary, JSON.stringify(guilds, null, 2));
+		renameSync(temporary, this.path);
 		this.guilds = guilds;
+		this.stamp = statSync(this.path).mtimeMs;
 		return next;
 	}
 }

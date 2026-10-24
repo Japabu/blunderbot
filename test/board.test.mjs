@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Chess } from 'chess.js';
-import { hasNewHigherPieceAttack } from '../board.mjs';
+import { hasNewHigherPieceAttack, higherPieceAttack } from '../board.mjs';
 
 function threat(fen, san) {
     const board = new Chess(fen);
@@ -60,4 +60,16 @@ test('king attacks never trigger the reload sound, including a capturable queen'
         assert.equal(hasNewHigherPieceAttack(fen, board.fen(), color), false, color);
     }
     assert.equal(threat('7k/8/8/8/3r4/8/4K3/8 w - - 0 1', 'Ke3'), false);
+});
+
+test('uncovering a line is a discovery, while a direct knight attack uses the gun', () => {
+    for (const [fen, san, expected] of [
+        ['k7/8/7q/8/8/8/3N4/K1B5 w - - 0 1', 'Nf3', 'discovery'],
+        ['k7/8/7n/8/8/8/3N4/K1B5 w - - 0 1', 'Nf3', 'discovery'],
+        ['k7/8/8/4q3/8/8/K7/6N1 w - - 0 1', 'Nf3', 'attack_up'],
+        ['7k/8/8/8/3r4/8/4K3/8 w - - 0 1', 'Ke3', null],
+    ]) {
+        const board = new Chess(fen), before = board.fen(), move = board.move(san);
+        assert.equal(higherPieceAttack(before, board.fen(), move.color, move.from, move.to), expected, san);
+    }
 });

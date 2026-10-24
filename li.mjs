@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 
-import { captureInfo, fullFen, hasNewHigherPieceAttack, isEnPassant, isKnightFork } from "./board.mjs";
+import { captureInfo, fullFen, higherPieceAttack, isEnPassant, isKnightFork } from "./board.mjs";
 import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
 import { GamePosition } from './hand-and-brain.mjs';
@@ -414,14 +414,15 @@ async function handleMessage(gameId, body, receivedAt, socket) {
 
     // Everything readable off the board plays right away; the engine only gets a say once it's done
     const promotion = uci?.length === 5 ? uci[4] : null;
-    const higherPieceAttack = !replayed && mine && hasNewHigherPieceAttack(
-        gamePosition?.snapshots.get(ply - 1)?.fen, tracked?.fen, lastTurn);
+    const attackFlavor = !replayed && higherPieceAttack(
+        gamePosition?.snapshots.get(ply - 1)?.fen, tracked?.fen, lastTurn, tracked?.move?.from, tracked?.move?.to);
     const moveFlavor =
-        higherPieceAttack ? "attack_up" :
+        attackFlavor ? attackFlavor :
         enPassant ? "en_passant" :
         promotion === "n" ? "knight_promotion" :
-        promotion && mine ? "promotion" :
-        mine && checkStreak[lastTurn] === 3 ? "check_spam" :
+        promotion ? "promotion" :
+        tracked?.move?.isKingsideCastle() || tracked?.move?.isQueensideCastle() ? 'castle' :
+        checkStreak[lastTurn] === 3 ? "check_spam" :
         flavor;
     const mate = san?.includes("#");
     if (!replayed) {
@@ -452,11 +453,11 @@ async function handleMessage(gameId, body, receivedAt, socket) {
         // Nothing to add: before our time, or the game is over anyway
     } else if (stalemate) {
         if (mine) moment("stalemated");
-    } else if (mine && prevMyScore !== null) {
-        const moveDelta = moverScore - prevMyScore;
+    } else if (mine && before) {
+        const moveDelta = moverScore - clampScore(before.score);
         console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}, flavor: ${moveFlavor}`);
         if (ply === newestPly && !cheat?.finished) {
-            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime, flavor: moveFlavor, san });
+            callbacks.onMoveDelta?.(moveDelta, { before: clampScore(before.score), after: moverScore, thinkTime, flavor: moveFlavor, san, uci, bestmove: before.bestmove });
         }
     }
     if (mine) prevMyScore = moverScore;
@@ -487,7 +488,7 @@ function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine) {
     if (isKnightFork(board, uci)) return "fork";
     if (!capture) return null;
     if (capture.capturer === "k") return "king_capture";
-    return null;
+    return 'capture';
 }
 
 // Komarov and then waiting music when the side to move takes too long; the next move cancels it all
