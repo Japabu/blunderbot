@@ -21,7 +21,7 @@ Board effects (captures, forks, en passant, ...) or Komarov announcing the move 
 
 ### When You Make a Good Move:
 - 💰 **good_move** (+150): Price is Right, "Okay let's go", anime wow, Owen Wilson *wow*
-- 📯 **great_move** (+300): Airhorn, MLG airhorn, "Oh baby a triple", Hallelujah
+- 📯 **great_move** (+300): Airhorn, MLG airhorn, Hallelujah
 - 🦔 **fast_good_move**: a good move played instantly gets Sonic's *gotta go fast*
 
 ### When You Blunder:
@@ -45,12 +45,8 @@ Board effects (captures, forks, en passant, ...) or Komarov announcing the move 
 
 ### Captures (no engine needed, and they beat the good/bad move sound unless it's a real blunder):
 - 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Plays immediately and takes priority over engine feedback; follows `misc` and the usual hand-and-brain sound rules. Opponent moves do not trigger it.
-- 🩸 **first_blood**: first capture of the game
-- ⚔️ **double_kill** / **triple_kill** / **quadra_kill** / **penta_kill**: you capture on 2, 3, 4, 5 moves in a row, and 😈 **opponent_double_kill** when they do it twice
-- 🎯 **headshot**: a bishop, rook or queen snipes something from 5+ squares away
 - 😭 **lost_queen**: they take your queen: *NOOOOO*, and 👋 **queen_trade**: *bye, have a great time* / sayonara
 - 🚪 **king_capture**: the king takes something: *I am the one who knocks*
-- 💀 **bloodbath**: four captures in a row: *FATALITY*
 - 🍴 **fork**: a knight attacks the king and the queen or a rook at once: *surprise*
 
 ### Clock:

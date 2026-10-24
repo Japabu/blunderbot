@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 
-import { captureInfo, fullFen, hasNewHigherPieceAttack, isEnPassant, isKnightFork, isSnipe, pieceCount } from "./board.mjs";
+import { captureInfo, fullFen, hasNewHigherPieceAttack, isEnPassant, isKnightFork } from "./board.mjs";
 import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
 import { GamePosition } from './hand-and-brain.mjs';
@@ -55,8 +55,6 @@ let prevPosition = null; // { ply, score, bestmove } of the last evaluated posit
 let prevClocks = null;   // { white, black } seconds left after the previous move
 let prevBoard = null;    // board after the previous move
 let checkStreak = { w: 0, b: 0 };   // consecutive checking moves per side
-let captureStreak = { w: 0, b: 0 }; // consecutive capturing moves per side
-let captureRun = 0;                 // consecutive plies that were all captures
 let queenTaken = null;              // { ply, white } of the last queen capture, to spot queen trades
 let scrambled = false;              // time scramble already announced this game
 let replayedUntil = 0;              // on connect Lichess replays recent moves; up to this ply they stay silent
@@ -145,8 +143,8 @@ let ws = null;
 // player stalemated the opponent), "promotion", "knight_promotion" (either side), "check_spam" (third check
 // in a row by the watched player), "opponent_blunder", "you_slow", "opponent_slow",
 // "time_scramble", or a flavor. Wins and losses, including checkmate, use result callbacks.
-// flavor: what a move did on the board, no engine involved: "queen_trade", "lost_queen", "fork", "headshot",
-// "king_capture", "bloodbath", "first_blood", "double_kill" ... "penta_kill", "opponent_double_kill".
+// flavor: what a move did on the board, no engine involved: "queen_trade", "lost_queen", "fork",
+// "king_capture", or "attack_up".
 // On the watched player's moves it comes with onMoveDelta so a real blunder can still win.
 // onMoveDelta's info: before/after are the watched player's eval around the move, thinkTime in seconds or null
 export async function watchPlayer(playerName, newCallbacks) {
@@ -320,8 +318,6 @@ function connectToGame(gameId) {
     prevClocks = null;
     prevBoard = null;
     checkStreak = { w: 0, b: 0 };
-    captureStreak = { w: 0, b: 0 };
-    captureRun = 0;
     queenTaken = null;
     scrambled = false;
     clearWaitTimers();
@@ -476,10 +472,8 @@ function moment(name) {
     callbacks.onMoment?.(name);
 }
 
-// What the move did on the board, most remarkable first. Updates the capture streaks, so call once per move.
+// What the move did on the board, most remarkable first. Retains the last queen capture for trades.
 function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine) {
-    captureStreak[lastTurn] = capture ? captureStreak[lastTurn] + 1 : 0;
-    captureRun = capture ? captureRun + 1 : 0;
     if (!prevBoard) return null;
 
     let queenFlavor = null;
@@ -489,17 +483,10 @@ function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine) {
         queenTaken = { ply, white };
     }
 
-    // Once someone is on a capture streak the announcer keeps going: double, triple, quadra, penta, penta...
-    const streak = captureStreak[lastTurn];
-    if (mine && streak >= 2) return ["double_kill", "triple_kill", "quadra_kill", "penta_kill"][Math.min(streak, 5) - 2];
     if (queenFlavor) return queenFlavor;
-    if (!mine && streak >= 2) return "opponent_double_kill";
     if (isKnightFork(board, uci)) return "fork";
     if (!capture) return null;
-    if (isSnipe(uci)) return "headshot";
     if (capture.capturer === "k") return "king_capture";
-    if (captureRun === 4) return "bloodbath";
-    if (pieceCount(prevBoard) === 32) return "first_blood";
     return null;
 }
 

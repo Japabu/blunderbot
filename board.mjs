@@ -36,8 +36,6 @@ export function squareAt(board, square) {
 
 const isWhite = piece => piece !== "." && piece === piece.toUpperCase();
 
-export const pieceCount = board => board.replace(/[\d/]/g, "").length;
-
 // Lichess only sends the board, so rebuild the rest of the FEN: castling rights are assumed while
 // king and rook are still at home, and a double pawn push leaves an en passant square behind
 export function fullFen(board, turn, lastUci) {
@@ -71,15 +69,6 @@ export function captureInfo(prevBoard, uci, enPassant) {
     // Castling is encoded king-takes-own-rook, that's not a capture
     if (target === "." || isWhite(target) === isWhite(squareAt(prevBoard, uci.slice(0, 2)))) return null;
     return { captured: target.toLowerCase(), capturer };
-}
-
-// A capture from across the board: at least this many squares away (only bishops, rooks and queens reach)
-const SNIPE_DISTANCE = 5;
-
-export function isSnipe(uci) {
-    const files = Math.abs(uci.charCodeAt(0) - uci.charCodeAt(2));
-    const ranks = Math.abs(uci[1] - uci[3]);
-    return Math.max(files, ranks) >= SNIPE_DISTANCE;
 }
 
 // The knight that just moved attacks the enemy king and their queen or a rook at the same time
