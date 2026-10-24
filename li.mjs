@@ -64,6 +64,7 @@ let waitTimers = [];
 let gamePosition = null;
 let currentPosition = null;
 let newestPly = 0;
+let announcedLossGameId = null;
 let lastSocketMessageAt = 0;
 let lastPositionUpdateAt = 0;
 let lastPositionCheckAt = 0;
@@ -136,13 +137,14 @@ let ws = null;
 // callbacks: onMove(), onMoveInstant({ ply, san, flavor }) as soon as a move arrives, before the engine,
 // onMoveDelta(delta, { before, after, thinkTime, flavor, san }) for the watched player once it's evaluated,
 // onMoment(moment), onCommentary("resign"/"draw"/"think"/"hurry") for results and long thinks,
-// onGameStart(opponent), onCheatAlert(opponent, summary), onGameEnd(opponent, summary)
+// onGameStart(opponent), onCheatAlert(opponent, summary), onGameEnd(opponent, summary),
+// onGameLoss() once Lichess confirms a loss, after invalidating piece cues
 // onPosition(position|null) invalidates old brain cues immediately; onPositionAnalysis(position, result)
 // is only emitted while that exact position is still current. wantsBrainCue() opts into opening searches.
-// moment: "game_start", "en_passant" (either side), "delivered_mate", "got_mated", "stalemated" (the watched
+// moment: "game_start", "en_passant" (either side), "delivered_mate", "stalemated" (the watched
 // player stalemated the opponent), "promotion", "knight_promotion" (either side), "check_spam" (third check
 // in a row by the watched player), "opponent_blunder", "win_on_time", "you_slow", "opponent_slow",
-// "time_scramble", "lost_game" (lost any way but checkmate), or a flavor
+// "time_scramble", or a flavor. All losses, including checkmate, use onGameLoss.
 // flavor: what a move did on the board, no engine involved: "queen_trade", "lost_queen", "fork", "headshot",
 // "king_capture", "bloodbath", "first_blood", "double_kill" ... "penta_kill", "opponent_double_kill".
 // On the watched player's moves it comes with onMoveDelta so a real blunder can still win.
@@ -363,15 +365,19 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     if (messageType === "endData" || messageType === "end") {
         const { winner, status } = body.d ?? {};
         const myColor = currentPlayerColor === "w" ? "white" : "black";
+        // A bare end can precede the detailed result. Do not let finishing the game swallow that result.
+        const lost = !!(winner && winner !== myColor && announcedLossGameId !== gameId);
         clearWaitTimers();
         if (cheat && !cheat.finished) {
-            // Checkmate already had its sound on the mating move
-            if (winner && winner !== myColor && status?.name !== "mate") moment("lost_game");
-            else if (winner === myColor && status?.name === "outoftime") moment("win_on_time");
+            if (winner === myColor && status?.name === "outoftime") moment("win_on_time");
             else if (winner === myColor && status?.name === "resign") callbacks.onCommentary?.("resign");
             else if (!winner && ["draw", "stalemate"].includes(status?.name)) callbacks.onCommentary?.("draw");
         }
         finishGame();
+        if (lost) {
+            announcedLossGameId = gameId;
+            callbacks.onGameLoss?.();
+        }
         return;
     }
     if (messageType !== "move") return;
@@ -419,7 +425,7 @@ async function handleMessage(gameId, body, receivedAt, socket) {
         promotion && mine ? "promotion" :
         mine && checkStreak[lastTurn] === 3 ? "check_spam" :
         flavor;
-    const mate = san?.includes("#") ? (mine ? "delivered_mate" : "got_mated") : null;
+    const mate = san?.includes("#") ? (mine ? "delivered_mate" : "lost_game") : null;
     if (!replayed) {
         lastMoveReceivedAt = receivedAt;
         callbacks.onMoveInstant?.({ ply, san, flavor: mate ?? moveFlavor, mine });

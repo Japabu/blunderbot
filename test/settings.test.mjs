@@ -31,6 +31,20 @@ test('opponent moves permit only Dimitri commentary, with every sound category e
     assert.equal(soundEnabled({ ...BOT_DEFAULTS, hand_and_brain: true }, 'blunder_big', true), true);
 });
 
+test('a confirmed loss follows misc even after an opponent move and in hand-and-brain mode', () => {
+    for (const mine of [false, true]) {
+        for (const hand_and_brain of [false, true]) {
+            const settings = { ...BOT_DEFAULTS, hand_and_brain };
+            assert.equal(soundEnabled(settings, 'lost_game', mine, true), true);
+            assert.equal(soundEnabled({ ...settings, misc: false }, 'lost_game', mine, true), false);
+        }
+    }
+    assert.equal(soundEnabled(BOT_DEFAULTS, 'lost_game', false), false, 'ordinary opponent moves stay quiet');
+    for (const slot of ['double_kill', 'blunder_big', 'good_move', 'sus']) {
+        assert.equal(soundEnabled(BOT_DEFAULTS, slot, false, true), false, slot);
+    }
+});
+
 test('partial settings persist across restart and are isolated per server', () => {
 	const dir = mkdtempSync(join(tmpdir(), 'blunderbot-settings-'));
 	try {

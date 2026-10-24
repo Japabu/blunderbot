@@ -16,7 +16,7 @@ import { InactivityTimer } from './inactivity.mjs';
 
 const settingsStore = new SettingsStore('./data/settings.json', BOT_DEFAULTS);
 let activeGuildId = null;
-const enabled = slot => soundEnabled(settingsStore.get(activeGuildId), slot, latestMoveWasMine());
+const enabled = (slot, gameOver = false) => soundEnabled(settingsStore.get(activeGuildId), slot, latestMoveWasMine(), gameOver);
 const brainEnabled = () => settingsStore.get(activeGuildId).hand_and_brain;
 
 // Each sound slot is a folder in sounds/, and a random clip from it plays
@@ -48,7 +48,7 @@ const REAL_BLUNDER = -300;
 // Waiting music stops as soon as the next move comes in
 const WAITING_SLOTS = new Set(["opponent_slow", "you_slow"]);
 // Time scramble music only gives way to the big moments
-const BIG_SLOTS = new Set(["delivered_mate", "got_mated", "stalemated", "win_on_time", "misinput", "threw_win", "blunder_big", "blunder_queen", "lost_queen", "queen_trade"]);
+const BIG_SLOTS = new Set(["delivered_mate", "lost_game", "stalemated", "win_on_time", "misinput", "threw_win", "blunder_big", "blunder_queen", "lost_queen", "queen_trade"]);
 
 process.on('unhandledRejection', error => {
 	console.error('Unhandled promise rejection:', error);
@@ -133,10 +133,10 @@ const brain = new HandAndBrain({
 });
 
 // Plays a random clip of a slot, never the same one twice in a row
-function play(slot) {
+function play(slot, { gameOver = false } = {}) {
 	// A piece cue takes priority over blunder feedback; the next cue can also interrupt a meme clip.
-	if (brainEnabled() && nowPlaying === 'hand_and_brain') return false;
-	if (!enabled(slot)) return false;
+	if (!gameOver && brainEnabled() && nowPlaying === 'hand_and_brain') return false;
+	if (!enabled(slot, gameOver)) return false;
 	const clips = SOUND_POOLS[slot] ?? [];
 	if (!clips.length) return console.error('No sounds for', slot);
 	if (nowPlaying === 'time_scramble' && !BIG_SLOTS.has(slot)) return;
@@ -321,6 +321,10 @@ function startSpectating(guild, channelId, username) {
 		onCheatAlert: (opponent, summary) => {
 			console.log('Cheat alert:', formatReport(opponent, summary));
 		},
+		onGameLoss: () => {
+			brain.reset();
+			play('lost_game', { gameOver: true });
+		},
 		onGameEnd: (opponent, summary) => console.log('Game report:', formatReport(opponent, summary)),
 	});
 	requestBrainCue();
@@ -375,7 +379,7 @@ async function handleInteraction(interaction) {
 		}
 		await interaction.reply({
 			content: `Settings (saved for this server):\n${Object.entries(settings).map(([key, value]) => `${key}: **${value ? 'on' : 'off'}**`).join('\n')}`
-				+ (settings.hand_and_brain ? '\n\nHand and brain: I name a piece on your turn; you choose its move. Bad-move sounds follow bad_moves; other sounds stay silent.' : ''),
+				+ (settings.hand_and_brain ? '\n\nHand and brain: I name a piece on your turn; you choose its move. Bad-move sounds follow bad_moves; the loss reaction follows misc.' : ''),
 			flags: MessageFlags.Ephemeral,
 		});
 	} else if (interaction.commandName === "lichess") {
