@@ -275,6 +275,7 @@ function startSpectating(guild, channelId, username) {
 	connection.subscribe(player);
 	watchPlayer(username, {
 		waitingTiming: () => timingStore.get(activeGuildId),
+		wantsBadMoves: () => ['blunder_tiny', 'blunder_small', 'blunder_medium', 'blunder_big', 'blunder_queen', 'misinput', 'threw_win'].some(slot => enabled(slot, false, true)),
 		wantsBrainCue: brainEnabled,
 		wantsBrilliant: () => enabled('brilliant_move', false, true),
 		wantsGreat: () => enabled('great_move', false, true),

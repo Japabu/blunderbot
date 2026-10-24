@@ -6,6 +6,7 @@ import sf from "./sf.mjs";
 import { GamePosition } from './hand-and-brain.mjs';
 import { verifyBrilliant, verifyGreat } from './brilliant.mjs';
 import { waitingPlan } from './timing.mjs';
+import { confirmBadMove } from './quality-confirmation.mjs';
 
 
 async function getGameInfo(gameId, playerName) {
@@ -27,11 +28,12 @@ async function getGameInfo(gameId, playerName) {
 
     const { white, black } = game?.players ?? {};
     const opponentOf = side => ({ name: side?.user?.name ?? "anonymous", rating: side?.rating, speed: game.speed, clock: game.clock });
+    const result = { finished: typeof game.status === 'string' && !['created', 'started'].includes(game.status), winner: game.winner };
     const position = new GamePosition(game);
     const plies = position.valid ? position.ply : (game.moves?.trim().split(/\s+/).filter(Boolean).length ?? 0);
 
-    if (playerName === white?.user?.name?.toLowerCase()) return { color: "w", opponent: opponentOf(black), plies, position };
-    else if (playerName === black?.user?.name?.toLowerCase()) return { color: "b", opponent: opponentOf(white), plies, position };
+    if (playerName === white?.user?.name?.toLowerCase()) return { color: "w", opponent: opponentOf(black), plies, position, ...result };
+    else if (playerName === black?.user?.name?.toLowerCase()) return { color: "b", opponent: opponentOf(white), plies, position, ...result };
     else throw new Error('Player not found in game');
 };
 
@@ -176,8 +178,27 @@ async function poll() {
         callbacks.onGameActivity?.(!!gameId && !(gameId === currentGameId && cheat?.finished));
 
         if (!gameId) {
-            if (currentGameId) closeGame();
+            if (currentGameId) {
+                if (announcedResultGameId === currentGameId) { closeGame(); return; }
+                const previousGame = currentGameId;
+                const info = await getGameInfo(previousGame, polledPlayer);
+                if (polledPlayer !== currentPlayerName || previousGame !== currentGameId) return;
+                if (!info.finished) {
+                    callbacks.onGameActivity?.(true);
+                    return; // A transient status response must not close a live game.
+                }
+                announceResult(previousGame, info.winner);
+                closeGame();
+            }
             return;
+        }
+
+        // A new game can appear before the old socket delivers its detailed result.
+        if (currentGameId && gameId !== currentGameId && announcedResultGameId !== currentGameId) {
+            const previousGame = currentGameId;
+            const info = await getGameInfo(previousGame, polledPlayer);
+            if (polledPlayer !== currentPlayerName || previousGame !== currentGameId) return;
+            if (info.finished) announceResult(previousGame, info.winner);
         }
 
         // An open TCP connection can stop delivering game events. Lichess answers our pings with 0.
@@ -202,7 +223,7 @@ async function poll() {
                 replayedUntil = newestPly;
                 clearWaitTimers();
                 setCurrentPosition(gamePosition.current);
-                if (gamePosition.ended) finishGame();
+                if (gamePosition.ended) announceResult(gameId, info.winner);
                 else requestBrainCue();
             }
         }
@@ -259,6 +280,16 @@ function finishGame() {
     if (!cheat || cheat.finished) return;
     cheat.finished = true;
     callbacks.onGameEnd?.(cheat.opponent, cheat.summary());
+}
+
+function announceResult(gameId, winner) {
+    clearWaitTimers();
+    finishGame();
+    if (!['white', 'black'].includes(winner) || announcedResultGameId === gameId) return;
+    announcedResultGameId = gameId;
+    const myColor = currentPlayerColor === 'w' ? 'white' : 'black';
+    if (winner === myColor) callbacks.onGameWin?.();
+    else callbacks.onGameLoss?.();
 }
 
 function closeGame() {
@@ -360,19 +391,11 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     }
     if (messageType === "endData" || messageType === "end") {
         const { winner, status } = body.d ?? {};
-        const myColor = currentPlayerColor === "w" ? "white" : "black";
-        // A bare end can precede the detailed result. Do not let finishing the game swallow that result.
-        const result = winner && announcedResultGameId !== gameId ? (winner === myColor ? 'win' : 'loss') : null;
-        clearWaitTimers();
         if (cheat && !cheat.finished) {
             if (!winner && ["draw", "stalemate"].includes(status?.name)) callbacks.onCommentary?.("draw");
         }
-        finishGame();
-        if (result) {
-            announcedResultGameId = gameId;
-            if (result === 'win') callbacks.onGameWin?.();
-            else callbacks.onGameLoss?.();
-        }
+        // A bare end can precede details; polling also reconciles confirmed results.
+        announceResult(gameId, winner);
         return;
     }
     if (messageType !== "move") return;
@@ -459,7 +482,10 @@ async function handleMessage(gameId, body, receivedAt, socket) {
         const moveDelta = before ? moverScore - clampScore(before.score) : null;
         let brilliant = null;
         let great = null;
-        if (before && (callbacks.wantsBrilliant?.() || callbacks.wantsGreat?.()) && tracked?.fen) {
+        let quality = { before: before ? clampScore(before.score) : null, after: moverScore, bestmove: before?.bestmove };
+        let qualityUnknown = false;
+        let qualityConfirmed = false;
+        if (before && (callbacks.wantsBadMoves?.() || callbacks.wantsBrilliant?.() || callbacks.wantsGreat?.()) && tracked?.fen) {
             try {
                 const searches = new Map();
                 const options = {
@@ -473,11 +499,16 @@ async function handleMessage(gameId, body, receivedAt, socket) {
                 };
                 if (callbacks.wantsBrilliant?.()) brilliant = await verifyBrilliant({ ...options, isCurrent: () => options.isCurrent() && !!callbacks.wantsBrilliant?.() });
                 if (!brilliant && callbacks.wantsGreat?.()) great = await verifyGreat({ ...options, baseline: before, isCurrent: () => options.isCurrent() && !!callbacks.wantsGreat?.() });
-            } catch (error) { console.error('Tactical verification failed:', error.message); }
+                if (!brilliant && !great && callbacks.wantsBadMoves?.()) {
+                    const confirmed = await confirmBadMove({ ...options, before, after: { score, depth, bestmove }, thinkTime });
+                    if (confirmed) { quality = confirmed; qualityConfirmed = confirmed.confirmed; }
+                    else qualityUnknown = true;
+                }
+            } catch (error) { qualityUnknown = !!callbacks.wantsBadMoves?.(); console.error('Move verification failed:', error.message); }
         }
         console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}, flavor: ${moveFlavor}`);
         if (ply === newestPly && !cheat?.finished) {
-            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime, flavor: moveFlavor, san, uci, bestmove: before?.bestmove, brilliant, great });
+            callbacks.onMoveDelta?.(moveDelta, { ...quality, qualityUnknown, qualityConfirmed, thinkTime, flavor: moveFlavor, san, uci, brilliant, great });
         }
     }
     if (mine) prevMyScore = moverScore;
