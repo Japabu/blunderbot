@@ -93,6 +93,8 @@ Anything that can be read off the board (captures, forks, en passant, checkmate,
 - `/stop` - Stop the madness (coward)
 - `/ping` - Check if the bot is alive and ready to judge you
 
+Blunderbot leaves voice after five minutes without an active Lichess game, matching Paddibot. Set `IDLE_TIMEOUT_MINUTES` to change this. Active games, including long thinks, keep it connected. Leaving due to inactivity stops spectating and clears the saved session; use `/lichess` to start again. Unexpected voice disconnections are retried automatically while spectating.
+
 ## Hand and brain
 
 Enable `/config hand_and_brain:true`, then use `/lichess <username>` as usual. If the bot is already watching you, enabling the mode takes effect on the current turn. It announces **pawn, knight, bishop, rook, queen, or king** when it is your turn, and repeats that piece every three seconds until you move. Reminders stop when the position changes, the game ends, or the mode is disabled. You choose a move with that type of piece. Castling counts as a king move, and promotion counts as a pawn move. Moving a different piece gets a spoken “That was the wrong piece”; the bot cannot prevent a move in Lichess.

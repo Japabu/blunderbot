@@ -64,6 +64,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     });
     const { watchPlayer, stopWatching, requestBrainCue } = await import('../li.mjs');
     const spoken = [];
+    const activity = [];
     let enabled = true;
     const brain = new HandAndBrain({ enabled: () => enabled, speak: piece => spoken.push(piece) });
     t.after(() => { stopWatching(); hooks.deregister(); mock.restoreAll(); delete globalThis.brainTestSocket; });
@@ -71,6 +72,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     const callbacks = {
         wantsBrainCue: () => enabled,
         wantsPonder: () => ponderEnabled,
+        onGameActivity: active => activity.push(active),
         onPosition: position => brain.setPosition(position),
         onPositionAnalysis: (position, result) => brain.analyzed(position, result),
         onMove: move => brain.moved(move),
@@ -79,6 +81,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     await tick(); await flush();
     assert.deepEqual(spoken, ['knight'], 'White must get a cue before making the first move');
     assert.equal(searches.length, 1, 'initial polling must share a single search');
+    assert.equal(activity.at(-1), true, 'status polling must suspend idle disconnect during an active game');
     assert.equal(searches[0].brain, true, 'piece cues must use stronger searches');
     let socket = globalThis.brainTestSocket;
     assert.equal(socket.sent.at(-1), 'p', 'send the Lichess heartbeat instead of null');
@@ -172,6 +175,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     const beforeEndPonders = ponders.length;
     const stopsBeforeEnd = ponderStops;
     await emit({ t: 'endData', d: { winner: 'white', status: { name: 'resign' } } });
+    assert.equal(activity.at(-1), false, 'game end must start the idle countdown');
     release(); await pendingMove; await flush();
     assert.equal(brain.position, null);
     assert.equal(spoken.length, beforeEnd, 'a search completing after game end must stay silent');
