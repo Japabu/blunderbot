@@ -1,7 +1,8 @@
 const $ = selector => document.querySelector(selector);
 let state, group = 'quality', editing, dirty = false, busy = false;
 const audio = new Audio();
-audio.volume = Math.max(0, Math.min(100, Number(localStorage.getItem('blunderbot-preview-volume')) || 15)) / 100;
+const storedVolume = Number(localStorage.getItem('blunderbot-preview-volume') ?? 15);
+audio.volume = (Number.isFinite(storedVolume) ? Math.max(0, Math.min(100, storedVolume)) : 15) / 100;
 $('#volume').value = audio.volume * 100; $('#volume-label').textContent = `${Math.round(audio.volume * 100)}%`;
 const labels = { dimitri: 'Dimitri', good_moves: 'Good moves', bad_moves: 'Bad moves', misc: 'Special & game', hand_and_brain: 'Hand & brain' };
 const groups = { quality: ['01 / THE ENGINE’S VERDICT', 'Move quality', 'Rated against the best move available, before your move.'], special: ['02 / WHAT HAPPENS ON THE BOARD', 'Special moves', 'Discoveries, threats, captures and other chess moments.'], game: ['03 / BEYOND THE MOVES', 'Game & clock', 'Wins, losses, long thinks and the last ten seconds.'] };
