@@ -5,6 +5,7 @@ import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
 import { GamePosition } from './hand-and-brain.mjs';
 import { verifyBrilliant, verifyGreat } from './brilliant.mjs';
+import { waitingPlan } from './timing.mjs';
 
 
 async function getGameInfo(gameId, playerName) {
@@ -70,10 +71,6 @@ let lastPositionCheckAt = 0;
 const SOCKET_TIMEOUT_MS = 12000;
 const POSITION_CHECK_MS = 15000;
 
-// A long think first gets Komarov wondering what to play, then him asking for a move, then waiting music
-// (at this share of the base time, but never before the hurry line had its turn)
-const THINK_SECONDS = initial => initial < 180 ? 5 : initial < 600 ? 10 : 25;
-const SLOW_SHARE = 0.15;
 // Both clocks under this many seconds is a time scramble
 const SCRAMBLE_SECONDS = 10;
 let cheat = null;
@@ -514,17 +511,18 @@ function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine) {
     return 'capture';
 }
 
-// Komarov and then waiting music when the side to move takes too long; the next move cancels it all
+// One waiting reaction per turn, for either player; the next move cancels all timers.
 function watchThinkTime(gameId, ply, turn, initial) {
     clearWaitTimers();
     // The clock only starts once both sides made their first move
     if (ply < 2 || !initial) return;
-    const think = THINK_SECONDS(initial);
     const stillThinking = () => gameId === currentGameId && !cheat?.finished;
     const after = (seconds, fn) => waitTimers.push(setTimeout(() => stillThinking() && fn(), seconds * 1000));
-    after(think, () => callbacks.onCommentary?.("think"));
-    after(think * 2, () => callbacks.onCommentary?.("hurry"));
-    after(Math.max(think * 2 + 5, initial * SLOW_SHARE), () => moment(turn === currentPlayerColor ? "you_slow" : "opponent_slow"));
+    for (const step of waitingPlan(initial, cheat?.opponent.speed, callbacks.waitingTiming?.())) {
+        after(step.seconds, () => step.waiting
+            ? moment(turn === currentPlayerColor ? 'you_slow' : 'opponent_slow')
+            : callbacks.onCommentary?.(step.commentary));
+    }
 }
 
 function clearWaitTimers() {

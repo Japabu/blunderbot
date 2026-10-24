@@ -12,7 +12,7 @@ export const EVENTS = [
     event('blunder_queen', 'Huge blunder', 'quality', 'At least 45 percentage points lost; not necessarily a queen.'),
     event('misinput', 'Instant blunder', 'quality', 'A blunder played in less than one second.'),
     event('threw_win', 'Thrown win', 'quality', 'From +5 or better to +1 or worse, losing at least 10 percentage points.'),
-    event('attack_up', 'Attack a higher piece', 'special', 'The moved piece creates a new material-winning threat against a higher piece. Existing attacks and king attacks stay quiet. At most once every 12 seconds.'),
+    event('attack_up', 'Attack a higher piece', 'special', 'Every new legal threat by the moved piece against a higher piece. Pawn chases and queen harassment can trigger every move. Existing attacks and king attacks stay quiet.'),
     event('discovery', 'Discovered tactic', 'special', 'An uncovered check or a material-winning threat after recaptures. Ordinary trades and pawn-only threats stay quiet.'),
     event('castle', 'Castling', 'special', 'Kingside or queenside castling.', null, { enabled: false }),
     event('capture', 'Any capture', 'special', 'An ordinary capture without a more specific event.', null, { enabled: false }),
@@ -28,8 +28,8 @@ export const EVENTS = [
     event('won_game', 'You win', 'game', 'A confirmed win, including mate, resignation, timeout or abandonment.'),
     event('lost_game', 'You lose', 'game', 'A confirmed loss, including mate, resignation, timeout or abandonment.'),
     event('stalemated', 'You give stalemate', 'game', 'Your move leaves the opponent with no legal move and no check.'),
-    event('you_slow', 'You take too long', 'game', 'After 15% of the starting time, with a minimum waiting period.'),
-    event('opponent_slow', 'Opponent takes too long', 'game', 'Waiting music while your opponent thinks.'),
+    event('you_slow', 'You take too long', 'game', 'One waiting sound per turn, after the delay below. Stops when you move.'),
+    event('opponent_slow', 'Opponent takes too long', 'game', 'One waiting sound per turn, after the same delay. Stops when they move.'),
     event('time_scramble', 'Time scramble', 'game', 'Optional music when both clocks are below ten seconds; off by default to keep clock pressure quiet.', 'time_scramble', { enabled: false }),
     event('sus', 'Lichess account flag', 'game', 'The opponent has a Lichess terms-of-service flag at game start.'),
 ];
@@ -84,9 +84,16 @@ export class SoundRules {
     }
     get(guild, id) { this.refresh(); return { ...defaultRule(id), ...this.guilds[guild]?.[id] }; }
     all(guild) { return Object.fromEntries(EVENTS.map(event => [event.id, this.get(guild, event.id)])); }
-    save(guild, rules, library = soundLibrary()) {
+    retired(guild) { this.refresh(); return Object.fromEntries(Object.entries(this.guilds[guild] ?? {}).filter(([id]) => !EVENT_IDS.has(id))); }
+    save(guild, rules, library = soundLibrary(), retired = {}) {
         const clean = validateRules(rules, library);
-        this.refresh(); atomicJson(this.path, { ...this.guilds, [guild]: clean }); this.stamp = null;
+        const ids = new Set(library.map(clip => clip.id));
+        for (const [id, rule] of Object.entries(retired)) {
+            if (EVENT_IDS.has(id) || !/^[a-z_]{1,60}$/.test(id) || typeof rule?.enabled !== 'boolean'
+                || !['you','opponent','both'].includes(rule.side) || (rule.clips !== null && (!Array.isArray(rule.clips)
+                    || rule.clips.length > 50 || rule.clips.some(clip => !ids.has(clip))))) throw Error('Invalid saved pool');
+        }
+        this.refresh(); atomicJson(this.path, { ...this.guilds, [guild]: { ...this.guilds[guild], ...clean, ...retired } }); this.stamp = null;
         return this.all(guild);
     }
 }

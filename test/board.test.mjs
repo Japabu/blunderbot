@@ -95,3 +95,14 @@ test('reload ignores maintained sliding threats and old attacks made legal by es
         assert.equal(higherPieceAttack(before, board.fen(), move.color, move.from, move.to), null);
     }
 });
+
+test('actual LdTagjRO fossil false positives stay quiet or use the direct-attack sound', () => {
+    for (const [fen, san, expected] of [
+        ['r3kb1r/p2npppp/2p2n2/qp1P3b/2B5/2N2P2/PPP1N1PP/R1BQ1RK1 w kq - 0 10', 'dxc6', 'attack_up'],
+        ['r3kb1r/4pppp/p1P5/2q1n2b/B5n1/2N2P2/PPP1N1PP/R1B1QR1K b kq - 5 14', 'Nxh2', 'attack_up'],
+        ['r3kb1r/4pppp/p1n5/2q4b/B7/2N2P2/PPP1N1PK/R1B1QR2 w kq - 0 16', 'Ng3', null],
+    ]) {
+        const board = new Chess(fen), move = board.move(san);
+        assert.equal(higherPieceAttack(fen, board.fen(), move.color, move.from, move.to), expected, san);
+    }
+});

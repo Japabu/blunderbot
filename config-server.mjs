@@ -1,6 +1,7 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -68,6 +69,16 @@ const server = createServer(async (req, res) => {
         if (req.method === 'POST' && url.pathname === '/api/save') {
             if (req.headers['content-type'] !== 'application/json') return send(res, 415, { error: 'Expected JSON' });
             const input = JSON.parse((await body(req, 200_000)).toString());
+            const backups = join(root, 'data', 'config-backups');
+            await mkdir(backups, { recursive: true });
+            await writeFile(join(backups, `${Date.now()}-${randomUUID()}.json`), JSON.stringify(input, null, 2));
+            if (input.overwrite) {
+                const latest = await remote({ action: 'snapshot', guild: input.guild });
+                const active = new Set(latest.events.map(event => event.id));
+                input.archivedRules = { ...input.archivedRules, ...Object.fromEntries(Object.entries(input.rules).filter(([id]) => !active.has(id))) };
+                input.rules = Object.fromEntries(latest.events.map(event => [event.id, input.rules[event.id] ?? latest.rules[event.id]]));
+                input.revision = latest.revision;
+            }
             return send(res, 200, await remote({ ...input, action: 'save' }));
         }
         if (req.method === 'POST' && url.pathname === '/api/upload') {

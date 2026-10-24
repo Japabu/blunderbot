@@ -47,8 +47,8 @@ A blunder played within one second uses `misinput`. Losing at least 10 percentag
 - 💔 **lost_game**: a random loss reaction: *Du bist gut genug*, Emotional Damage, *YOU DIED*, coffin dance, Mario death, or Käsiger Michael. Picks one clip per confirmed loss without repeating the previous clip. Covers checkmate, resignation, running out of time, and abandonment; follows `misc` and also works in hand-and-brain mode. This game-result sound can play after the opponent's final move; special-move sounds follow their separate player rules.
 - 🎺 **stalemated**: you stalemated them: sad trombone, *directed by Robert B. Weide*
 
-### Captures (no engine needed, and they beat the good/bad move sound unless it's a real blunder):
-- 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; king attacks, equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Uses the one-reaction-per-move policy; mistakes and verified exceptional moves take priority; follows `misc` and the usual hand-and-brain sound rules. The control room chooses your moves, opponent moves, or both; default is both. It only considers the piece that moved, excludes unchanged threats, checks net material after recaptures, and plays at most once every 12 seconds.
+### Board events (bad-move reactions take priority):
+- 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; king attacks, equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Uses the one-reaction-per-move policy; mistakes and verified exceptional moves take priority; follows `misc` and the usual hand-and-brain sound rules. The control room chooses your moves, opponent moves, or both; default is both. It only considers the piece that moved, excludes unchanged threats, checks net material after recaptures.
 - 🦴 **discovery**: moving a blocker uncovers check or a material-winning threat by an unmoved bishop, rook, or queen. Legal capture/recapture analysis excludes routine equal trades and pawn-only attacks. Uses the first five seconds of [xQc’s fossil clip](https://www.youtube.com/watch?v=knxrshWgEDM). Takes priority over reload.
 - **castle** and **capture**: dedicated configurable triggers, disabled until a sound is assigned in the control room.
 - 😭 **lost_queen**: they take your queen: *NOOOOO*, and 👋 **queen_trade**: *bye, have a great time* / sayonara
@@ -56,9 +56,9 @@ A blunder played within one second uses `misinput`. Losing at least 10 percentag
 - 🍴 **fork**: a knight attacks the king and the queen or a rook at once: *surprise*
 
 ### Clock:
-- 🤔 Komarov gets impatient on long thinks (10 s in blitz, 5 s in bullet, 25 s in rapid): *"what to play"*, *"hmm"*, *"thinking now thinking"*, and twice that long in: *"need to make move"*, *"time running"*, *"zeitnot"*
-- 🎵 **opponent_slow**: they've been thinking for 15% of the base time: Jeopardy, elevator music, snoring (stops as soon as they move)
-- 👨‍🍳 **you_slow**: you're the one thinking that long: *let him cook*
+- 🎵 **opponent_slow**: one waiting clip after **2 seconds in bullet** or **3 seconds in blitz**: Jeopardy, elevator music or snoring. Configure both delays under Game & clock.
+- 👨‍🍳 **you_slow**: the same delay on your turn: *let him cook*. Both waiting clips stop as soon as a move arrives.
+- 🤔 Longer games keep the previous timing: Komarov impatience followed by waiting music after 15% of the base time (minimum 55 seconds). Early waiting clips are never interrupted by later impatience lines.
 - 🎷 **time_scramble**: both clocks under 10 seconds: Yakety Sax (only big moments interrupt it)
 - 🤨 **sus**: a Lichess account flag at game start; ongoing suspicion is logged only (see below)
 
@@ -93,9 +93,9 @@ Run `npm run config` on the Mac and open **http://127.0.0.1:8769/**. The Mac use
 
 Choose a Discord server, toggle triggers, choose which player can trigger a special move, preview any shipped clip at a comfortable volume, and build random sound pools. Upload MP3/WAV/Ogg (maximum 10 MB; first 30 seconds) to convert locally to Discord-ready Opus and store it durably on the Pi. Empty/default-off capture and castle triggers can be activated after choosing clips. Preview volume affects the website only.
 
-**Save to Blunderbot** updates the live per-server settings; no bot restart is needed. The website rejects stale saves if another editor or Discord changed the same server's settings. Unsaved edits are labelled and protected when leaving the page. Uploads add library assets; they become active only after saving the event pool.
+**Save to Blunderbot** updates the live per-server settings; no bot restart is needed. The website rejects stale saves if another editor or Discord changed the same server's settings. Unsaved edits are automatically backed up in the browser and on every save attempt. A stale save retains the draft and offers Apply my edits; Back up edits also downloads a copy. Retired sound pools remain available in the pool picker. Uploads add library assets; they become active only after saving the event pool.
 
-`data/sound-rules.json` stores enabled/player/pool overrides, `data/custom-sounds.json` indexes uploads, and `data/custom/` keeps their audio. All are on the existing persistent volume and survive deployments. The bot watches settings changes so hand-and-brain and mute changes take effect during a game. The Mac bridge accepts only loopback requests; the Pi publishes its container port only on loopback and its Tailscale IP and accepts the configured tailnet origins. Both check Host/Origin, validates every sound ID, and never takes a remote shell command from the browser.
+`data/timing.json` stores per-server waiting delays, `data/sound-rules.json` stores enabled/player/pool overrides, `data/custom-sounds.json` indexes uploads, and `data/custom/` keeps their audio. All are on the existing persistent volume and survive deployments. The bot watches settings changes so hand-and-brain and mute changes take effect during a game. The Mac bridge accepts only loopback requests; the Pi publishes its container port only on loopback and its Tailscale IP and accepts the configured tailnet origins. Both check Host/Origin, validates every sound ID, and never takes a remote shell command from the browser.
 
 ## Commands
 

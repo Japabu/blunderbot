@@ -7,19 +7,21 @@ import { pathToFileURL } from 'node:url';
 import { SoundRules, EVENTS, atomicJson, soundLibrary, validateRules } from './sound-rules.mjs';
 import { SettingsStore } from './settings.mjs';
 import { BOT_DEFAULTS } from './sound-settings.mjs';
+import { TimingStore, validateTiming } from './timing.mjs';
 
 function read(path, fallback) { try { return JSON.parse(readFileSync(path, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; } }
 export function control(request, root = '.') {
     const rules = new SoundRules(resolve(root, 'data/sound-rules.json'));
     const settings = new SettingsStore(resolve(root, 'data/settings.json'), BOT_DEFAULTS);
+    const timing = new TimingStore(resolve(root, 'data/timing.json'));
     const session = read(resolve(root, 'data/session.json'), {});
     const names = read(resolve(root, 'data/guilds.json'), {});
     const ids = [...new Set([...Object.keys(names), ...Object.keys(settings.guilds), ...(session.guildId ? [session.guildId] : [])])];
     const guild = request.guild ?? session.guildId ?? ids[0];
     const library = soundLibrary(root);
-    const revision = () => createHash('sha256').update(JSON.stringify([settings.get(guild), rules.all(guild)])).digest('hex');
+    const revision = () => createHash('sha256').update(JSON.stringify([settings.get(guild), rules.all(guild), rules.retired(guild), timing.get(guild)])).digest('hex');
     if (request.action === 'snapshot') return { guild, guilds: ids.map(id => ({ id, name: names[id] ?? id })), settings: settings.get(guild),
-        rules: rules.all(guild), events: EVENTS, library: library.map(({ path, ...clip }) => clip), revision: revision(), connected: true };
+        rules: rules.all(guild), archivedRules: rules.retired(guild), timing: timing.get(guild), events: EVENTS, library: library.map(({ path, ...clip }) => clip), revision: revision(), connected: true };
     if (request.action === 'audio') {
         const clip = library.find(clip => clip.id === request.id);
         if (!clip) throw Error('Unknown sound');
@@ -31,7 +33,9 @@ export function control(request, root = '.') {
         if (!request.settings || Object.keys(BOT_DEFAULTS).some(key => typeof request.settings[key] !== 'boolean')) throw Error('Invalid switches');
         // Validate every input before changing either file.
         validateRules(request.rules, library, true);
-        rules.save(guild, request.rules, library);
+        const nextTiming = validateTiming(request.timing ?? timing.get(guild));
+        rules.save(guild, request.rules, library, request.archivedRules ?? {});
+        timing.save(guild, nextTiming);
         settings.update(guild, request.settings);
         return { saved: true, revision: revision() };
     }

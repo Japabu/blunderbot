@@ -15,12 +15,14 @@ import { watchVoiceConnection } from './voice.mjs';
 import { InactivityTimer } from './inactivity.mjs';
 import { SoundRules, eventFor, atomicJson } from './sound-rules.mjs';
 import { moveReaction } from './reaction.mjs';
+import { TimingStore } from './timing.mjs';
 
 if (process.env.CONTROL_MODE === 'direct') await import('./config-server.mjs');
 
 const settingsStore = new SettingsStore('./data/settings.json', BOT_DEFAULTS);
 let activeGuildId = null;
 const soundRules = new SoundRules();
+const timingStore = new TimingStore();
 const enabled = (slot, gameOver = false, mine = latestMoveWasMine()) => soundEnabled(settingsStore.get(activeGuildId), slot, mine, gameOver, soundRules.get(activeGuildId, slot));
 const brainEnabled = () => settingsStore.get(activeGuildId).hand_and_brain;
 
@@ -100,7 +102,7 @@ const SOUND_POOLS = Object.fromEntries(readdirSync('./sounds', { withFileTypes: 
 	.filter(entry => entry.isDirectory())
 	.map(entry => [entry.name, readdirSync(`./sounds/${entry.name}`).filter(file => file.endsWith('.ogg'))]));
 const lastPlayed = {};
-let lastReloadAt = -Infinity;
+let lastPosition = null;
 let nowPlaying = null;
 // Profiling: what was last handed to the player, and when (performance.now() ms)
 let pending = null;
@@ -130,7 +132,6 @@ function play(slot, { gameOver = false, mine = latestMoveWasMine() } = {}) {
 	// A piece cue takes priority over blunder feedback; the next cue can also interrupt a meme clip.
 	if (!gameOver && brainEnabled() && nowPlaying === 'hand_and_brain') return false;
 	if (!enabled(slot, gameOver, mine)) return false;
-	if (slot === 'attack_up' && performance.now() - lastReloadAt < 12_000) return false;
 	const rule = soundRules.get(activeGuildId, slot);
 	const pool = eventFor(slot)?.pool ?? slot;
 	const clips = rule.clips === null ? (SOUND_POOLS[pool] ?? []).map(clip => `${pool}/${clip}`) : rule.clips;
@@ -140,9 +141,9 @@ function play(slot, { gameOver = false, mine = latestMoveWasMine() } = {}) {
 	const clip = choices[Math.floor(Math.random() * choices.length)];
 	lastPlayed[slot] = clip;
 	nowPlaying = slot;
-	if (slot === 'attack_up') lastReloadAt = performance.now();
 	const path = clip.startsWith('custom/') ? `./data/${clip}` : `./sounds/${clip}`;
 	console.log(`Sound: ${slot} → ${clip}`);
+	console.log('Sound context:', JSON.stringify({ slot, clip, mine, gameOver, ...(slot === 'game_start' ? null : lastPosition) }));
 	startPlaying(`${slot}/${clip}`, path);
 	return true;
 }
@@ -256,7 +257,6 @@ function startSpectating(guild, channelId, username) {
 	if (activeGuildId && activeGuildId !== guild.id) stopSpectating();
 	inactivity.start();
 	brain.reset();
-	lastReloadAt = -Infinity;
 	player.stop();
 	activeGuildId = guild.id;
 	const connection = joinVoiceChannel({
@@ -274,11 +274,13 @@ function startSpectating(guild, channelId, username) {
 
 	connection.subscribe(player);
 	watchPlayer(username, {
+		waitingTiming: () => timingStore.get(activeGuildId),
 		wantsBrainCue: brainEnabled,
 		wantsBrilliant: () => enabled('brilliant_move', false, true),
 		wantsGreat: () => enabled('great_move', false, true),
 		onGameActivity: active => inactivity.activity(active),
 		onPosition: position => {
+			lastPosition = position;
 			brain.setPosition(position);
 			if (!position && nowPlaying === 'hand_and_brain') player.stop();
 		},
@@ -289,11 +291,13 @@ function startSpectating(guild, channelId, username) {
 		},
 		// Right away: a board effect (capture, fork, ...) or Komarov announcing the move
 		onMoveInstant: ({ san, flavor, mine }) => {
+			console.log('Move context:', JSON.stringify({ ...lastPosition, san, flavor, mine }));
 			if (!mine && (!flavor || !play(flavor, { mine }))) commentary(san);
 		},
 		// Once the engine is done: only cut in if the verdict is something other than what's already playing
 		onMoveDelta: (moveDelta, info) => {
 			const slot = moveReaction(info, slot => enabled(slot, false, true));
+			console.log('Move verdict:', JSON.stringify({ ...lastPosition, ...info, slot }));
 			if (!slot || !play(slot, { mine: true })) commentary(info.san);
 		},
 		onCommentary: commentary,
