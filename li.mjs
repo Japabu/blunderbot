@@ -1,6 +1,6 @@
 import WebSocket from 'ws';
 
-import { captureInfo, fullFen, isEnPassant, isKnightFork, isSnipe, pieceCount } from "./board.mjs";
+import { captureInfo, fullFen, hasNewHigherPieceAttack, isEnPassant, isKnightFork, isSnipe, pieceCount } from "./board.mjs";
 import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
 import { GamePosition } from './hand-and-brain.mjs';
@@ -418,7 +418,10 @@ async function handleMessage(gameId, body, receivedAt, socket) {
 
     // Everything readable off the board plays right away; the engine only gets a say once it's done
     const promotion = uci?.length === 5 ? uci[4] : null;
+    const higherPieceAttack = !replayed && mine && hasNewHigherPieceAttack(
+        gamePosition?.snapshots.get(ply - 1)?.fen, tracked?.fen, lastTurn);
     const moveFlavor =
+        higherPieceAttack ? "attack_up" :
         enPassant ? "en_passant" :
         promotion === "n" ? "knight_promotion" :
         promotion && mine ? "promotion" :

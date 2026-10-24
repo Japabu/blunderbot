@@ -247,4 +247,27 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     assert.equal(instant.length, beforeInstant, 'mate must not start another sound before the confirmed result');
     await emit({ t: 'endData', d: { winner: 'black', status: { name: 'mate' } } });
     assert.equal(wins.length - beforeWin, 1);
+
+    stopWatching();
+    gameId = 'pawn-threat'; playerColor = 'w'; gameMoves = '';
+    initialFen = '4k3/8/8/3q4/8/4P3/8/4K3 w - - 0 1';
+    await watchPlayer('hand', callbacks); await tick(); await flush();
+    socket = globalThis.brainTestSocket;
+    const threatBoard = new Chess(initialFen);
+    for (const [i, san] of ['e4', 'Kf8', 'Kf2'].entries()) {
+        const moved = threatBoard.move(san);
+        await emit({ t: 'move', d: { fen: threatBoard.fen().split(' ')[0], ply: i + 1, san: moved.san, uci: moved.lan } });
+        assert.equal(instant.at(-1).flavor === 'attack_up', i === 0, 'only the newly created own threat triggers');
+    }
+
+    stopWatching();
+    gameId = 'opponent-pawn-threat'; playerColor = 'w'; gameMoves = '';
+    initialFen = '4k3/8/4p3/8/3Q4/8/8/K7 b - - 0 1';
+    await watchPlayer('hand', callbacks); await tick(); await flush();
+    socket = globalThis.brainTestSocket;
+    const opponentBoard = new Chess(initialFen);
+    const opponentMove = opponentBoard.move('e5');
+    await emit({ t: 'move', d: { fen: opponentBoard.fen().split(' ')[0], ply: 2, san: opponentMove.san, uci: opponentMove.lan } });
+    assert.equal(instant.at(-1).mine, false);
+    assert.notEqual(instant.at(-1).flavor, 'attack_up', 'opponent threats do not select the reload effect');
 });
