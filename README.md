@@ -40,7 +40,7 @@ Anything that can be read off the board (captures, forks, en passant, checkmate,
 - ✋ **check_spam**: your third check in a row: *stop, stop, he's already dead*
 - 🤷 **opponent_blunder**: they hang something big: *oh no... anyway*
 - 🏆 **delivered_mate**: GTA mission passed, FF7 victory fanfare, We Are the Champions
-- 💔 **lost_game**: *Du bist gut genug* whenever Lichess confirms a loss, including checkmate, resignation, running out of time, or abandonment. Plays once, follows `misc`, and also works in hand-and-brain mode. This game-result sound can play after the opponent's final move; ordinary opponent moves still get only Dimitri and piece cues.
+- 💔 **lost_game**: a random loss reaction: *Du bist gut genug*, Emotional Damage, *YOU DIED*, coffin dance, Mario death, or Käsiger Michael. Picks one clip per confirmed loss without repeating the previous clip. Covers checkmate, resignation, running out of time, and abandonment; follows `misc` and also works in hand-and-brain mode. This game-result sound can play after the opponent's final move; ordinary opponent moves still get only Dimitri and piece cues.
 - 🎺 **stalemated**: you stalemated them: sad trombone, *directed by Robert B. Weide*
 - ⏱️ **win_on_time**: *to be continued*
 
