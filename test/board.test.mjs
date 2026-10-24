@@ -48,3 +48,16 @@ test('checking the king, friendly pieces and missing exact history stay quiet', 
     assert.equal(hasNewHigherPieceAttack(null, new Chess().fen(), 'w'), false);
     assert.equal(hasNewHigherPieceAttack('invalid', 'invalid', 'w'), false);
 });
+
+test('king attacks never trigger the reload sound, including a capturable queen', () => {
+    for (const [fen, san, color] of [
+        ['7k/8/8/8/8/3q4/8/4K3 b - - 0 1', 'Qd2+', 'w'],
+        ['4k3/8/3Q4/8/8/8/8/7K w - - 0 1', 'Qd7+', 'b'],
+    ]) {
+        const board = new Chess(fen);
+        board.move(san);
+        assert.ok(board.moves({ verbose: true }).some(move => move.piece === 'k' && move.captured === 'q'));
+        assert.equal(hasNewHigherPieceAttack(fen, board.fen(), color), false, color);
+    }
+    assert.equal(threat('7k/8/8/8/3r4/8/4K3/8 w - - 0 1', 'Ke3'), false);
+});

@@ -11,8 +11,7 @@ function higherPieceAttacks(fen, color) {
     fields[3] = '-'; // Compare the mover's possible captures; en passant only targets equal-value pawns.
     const board = new Chess(fields.join(' '));
     return new Set(board.moves({ verbose: true })
-        .filter(move => PIECE_VALUES[move.captured] > PIECE_VALUES[move.piece]
-            || (move.piece === 'k' && move.captured === 'q'))
+        .filter(move => move.piece !== 'k' && PIECE_VALUES[move.captured] > PIECE_VALUES[move.piece])
         .map(move => `${move.from}:${move.to}`));
 }
 
