@@ -56,8 +56,14 @@ export async function verifyBrilliant({ beforeFen, afterFen, uci, analyze, isCur
     return { grade: 'brilliant', slot: 'brilliant_move', sacrifice: offers[0].square, depth: Math.min(before.depth, after.depth) };
 }
 
-export async function verifyGreat({ beforeFen, afterFen, uci, baseline, analyze, isCurrent = () => true }) {
+export async function verifyGreat({ beforeFen, afterFen, uci, previousMove, baseline, analyze, isCurrent = () => true }) {
     uci = normalizeUci(uci);
+    // Taking back the piece just captured is an ordinary response even when it
+    // is the only non-losing move. Genuine sacrifices still use Brilliant.
+    if (previousMove?.captured) {
+        const move = new Chess(beforeFen).moves({ verbose: true }).find(move => move.lan === uci);
+        if (move?.captured && move.to === previousMove.to && !move.promotion) return null;
+    }
     const qualifies = result => {
         const [best, second] = result?.variations ?? [];
         return best?.moves?.[0] === uci && second?.moves?.[0] !== uci && Number.isFinite(best?.score)

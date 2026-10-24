@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 const event = (id, name, group, description, pool = id, extra = {}) => ({ id, name, group, description, pool, ...extra });
 export const EVENTS = [
     event('brilliant_move', 'Brilliant move', 'quality', 'A sound piece or exchange sacrifice, verified at depth 12+ against alternatives and accepting the sacrifice.', 'great_move'),
-    event('great_move', 'Great move', 'quality', 'You found the only good option: depth-12+ analysis confirms alternatives lose at least 10 percentage points. Normal moves stay quiet.'),
+    event('great_move', 'Great move', 'quality', 'You found the only good option: depth-12+ analysis confirms alternatives lose at least 10 percentage points. Normal moves and obvious recaptures stay quiet.'),
     event('blunder_tiny', 'Inaccuracy', 'quality', 'Between 5 and 10 percentage points lost.'),
     event('blunder_small', 'Mistake', 'quality', 'Between 10 and 20 percentage points lost.'),
     event('blunder_medium', 'Blunder', 'quality', 'Between 20 and 30 percentage points lost.'),

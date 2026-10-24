@@ -40,6 +40,8 @@ A blunder played within one second uses `misinput`. Losing at least 10 percentag
 
 Suspected inaccuracies, mistakes and blunders are confirmed with depth-12+ before/after searches before playing a bad sound. Existing deeper searches are reused. Ordinary moves receive no extra grading searches; cancelled or failed confirmation stays silent. Confirmed results are also reconciled from the game export when status polling loses the playing ID or the socket misses result details.
 
+Obvious immediate recaptures do not earn Great, even when all other moves lose material. Brilliant sacrifices and specific board events still have their separate checks.
+
 ### Special Moments:
 - 🔔 **game_start**: Boxing bell, as soon as the bot finds the new game
 - 🌸 **en_passant**: Anime ahh (either player, according to its rule)

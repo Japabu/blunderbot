@@ -490,6 +490,7 @@ async function handleMessage(gameId, body, receivedAt, socket) {
                 const searches = new Map();
                 const options = {
                     beforeFen: gamePosition?.snapshots.get(ply - 1)?.fen, afterFen: tracked.fen, uci,
+                    previousMove: gamePosition?.snapshots.get(ply - 1)?.move,
                     analyze: (fen, { multipv } = {}) => {
                         const key = fen + ':' + (multipv ?? 1);
                         if (!searches.has(key)) searches.set(key, evaluate(fen, true, multipv));

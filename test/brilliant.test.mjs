@@ -41,6 +41,19 @@ test('ordinary best moves stay quiet; only a verified gap to the next option ear
     assert.equal(calls, 2);
 });
 
+test('the actual forced recaptures 23.Rxd2 and 28.Rxd6 do not earn Great or start deep searches', async () => {
+    for (const [fen, san, previousMove] of [
+        ['2r2r1k/1p3ppp/3p2b1/p3p3/P1B1P1P1/1P1R3P/3b1P2/2R3K1 w - - 0 23', 'Rxd2', { captured: 'n', to: 'd2' }],
+        ['5r1k/1p4pp/2br1p2/p3p3/P1B3PP/1P6/5P2/3R2K1 w - - 0 28', 'Rxd6', { captured: 'r', to: 'd6' }],
+    ]) {
+        const p = position(fen, san);
+        const baseline = { depth: 8, variations: [
+            { depth: 8, score: 0, moves: [p.uci] }, { depth: 8, score: -500, moves: ['g1h2'] },
+        ] };
+        assert.equal(await verifyGreat({ ...p, previousMove, baseline, analyze: () => assert.fail('ordinary recapture started extra work') }), null);
+    }
+});
+
 test('Morphy’s Nxb5 sacrifice is verified with the actual Pi engine’s depth-12 evidence', async () => {
     const rows = readFileSync(new URL('./fixtures/opera-sacrifice.jsonl', import.meta.url), 'utf8').trim().split('\n').map(JSON.parse);
     const proof = await verifyBrilliant({ beforeFen: rows[0].fen, afterFen: rows[1].fen, uci: 'c3b5',
