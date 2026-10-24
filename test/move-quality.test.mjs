@@ -17,7 +17,7 @@ test('published loss bands distinguish accuracy and mistake severity', () => {
     assert.equal(classifyMove({ before: null, after: 10 }), null);
 });
 test('fast good moves have no special category, while true instant blunders still do', () => {
-    assert.equal(classifyMove({ before: 0, after: 0, bestmove: 'e1h1', uci: 'e1g1', thinkTime: .1 }).slot, 'great_move');
+    assert.equal(classifyMove({ before: 0, after: 0, bestmove: 'e1h1', uci: 'e1g1', thinkTime: .1 }).slot, null);
     assert.equal(classifyMove({ before: 0, after: -400, thinkTime: .2 }).slot, 'misinput');
     assert.notEqual(classifyMove({ before: 0, after: -400, thinkTime: null }).slot, 'misinput');
     assert.equal(classifyMove({ before: 500, after: 0, thinkTime: 10 }).slot, 'threw_win');

@@ -1,11 +1,12 @@
 const $ = selector => document.querySelector(selector);
+$('#studio-link').hidden = location.hostname !== '127.0.0.1';
 let state, group = 'quality', editing, dirty = false, busy = false;
 const audio = new Audio();
 const storedVolume = Number(localStorage.getItem('blunderbot-preview-volume') ?? 15);
 audio.volume = (Number.isFinite(storedVolume) ? Math.max(0, Math.min(100, storedVolume)) : 15) / 100;
 $('#volume').value = audio.volume * 100; $('#volume-label').textContent = `${Math.round(audio.volume * 100)}%`;
-const labels = { dimitri: 'Dimitri', good_moves: 'Good moves', bad_moves: 'Bad moves', misc: 'Special & game', hand_and_brain: 'Hand & brain' };
-const groups = { quality: ['01 / THE ENGINE’S VERDICT', 'Move quality', 'Rated against the best move available, before your move.'], special: ['02 / WHAT HAPPENS ON THE BOARD', 'Special moves', 'Discoveries, threats, captures and other chess moments.'], game: ['03 / BEYOND THE MOVES', 'Game & clock', 'Wins, losses, long thinks and the last ten seconds.'] };
+const labels = { dimitri: 'Dimitri', good_moves: 'Great & brilliant', bad_moves: 'Bad moves', misc: 'Special & game', hand_and_brain: 'Hand & brain' };
+const groups = { quality: ['01 / THE ENGINE’S VERDICT', 'Move quality', 'Normal moves stay quiet. Exceptional finds get praise; mistakes get reactions.'], special: ['02 / WHAT HAPPENS ON THE BOARD', 'Special moves', 'Discoveries, threats, captures and other chess moments.'], game: ['03 / BEYOND THE MOVES', 'Game & clock', 'Wins, losses, long thinks and the last ten seconds.'] };
 const esc = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 async function api(url, options) { const res = await fetch(url, options); const value = await res.json(); if (!res.ok || value.error) throw Error(value.error || 'Request failed'); return value; }
 function status(message, error = false) { $('#save-status').textContent = message; $('#save-status').classList.toggle('error', error); }

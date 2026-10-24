@@ -1,4 +1,5 @@
 import { Chess } from 'chess.js';
+import { asTurn, exchangeGain } from './tactics.mjs';
 
 // Helpers for the board-only FEN Lichess sends with every move ("rnbqkbnr/pppppppp/8/...")
 
@@ -38,12 +39,25 @@ export function higherPieceAttack(beforeFen, afterFen, color, movedFrom, movedTo
             const df = file(to) - file(from), dr = rank(to) - rank(from);
             const mf = file(movedFrom) - file(from), mr = rank(movedFrom) - rank(from);
             // The departing piece must actually have been between this slider and its target.
-            return df * mr === dr * mf && Math.sign(mf) === Math.sign(df) && Math.sign(mr) === Math.sign(dr)
+            const uncovered = df * mr === dr * mf && Math.sign(mf) === Math.sign(df) && Math.sign(mr) === Math.sign(dr)
                 && Math.max(Math.abs(mf), Math.abs(mr)) < Math.max(Math.abs(df), Math.abs(dr));
+            if (!uncovered) return false;
+            const after = new Chess(afterFen), target = after.get(to);
+            if (target?.type === 'k') return true; // A newly uncovered check is a tactic.
+            if (target?.type === 'p') return false; // A loose pawn alone is not fossil-worthy.
+            return exchangeGain(asTurn(afterFen, color), from + to) >= 100;
         });
         if (discovery && movedFrom) return 'discovery';
-        const before = higherPieceAttacks(beforeFen, color);
-        return [...higherPieceAttacks(afterFen, color)].some(attack => !before.has(attack)) ? 'attack_up' : null;
+        if (!movedFrom || !movedTo || beforeBoard.get(movedFrom)?.type === 'k') return null;
+        // Only the moving piece can create a direct reload threat. Use geometric
+        // attacks before the move so escaping check does not replay old threats,
+        // and remap the moving piece's origin to avoid replaying a sliding attack.
+        const after = asTurn(afterFen, color);
+        return [...higherPieceAttacks(after, color)].some(attack => {
+            const [from, to] = attack.split(':');
+            return from === movedTo && !beforeBoard.attackers(to, color).includes(movedFrom)
+                && exchangeGain(after, from + to) >= 100;
+        }) ? 'attack_up' : null;
     } catch { return null; }
 }
 
