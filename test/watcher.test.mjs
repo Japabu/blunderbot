@@ -62,6 +62,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     const spoken = [];
     const activity = [];
     const instant = [], deltas = [];
+    const losses = [];
     let enabled = true;
     const brain = new HandAndBrain({ enabled: () => enabled, speak: piece => spoken.push(piece) });
     t.after(() => { stopWatching(); hooks.deregister(); mock.restoreAll(); delete globalThis.brainTestSocket; });
@@ -74,6 +75,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         onMove: move => brain.moved(move),
         onMoveInstant: move => instant.push(move),
         onMoveDelta: (delta, info) => deltas.push(info),
+        onGameLoss: () => losses.push({ gameId, brainPosition: brain.position }),
     };
     await watchPlayer('hand', callbacks);
     await tick(); await flush();
@@ -204,4 +206,27 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     const afterUpgrade = searches.length;
     requestBrainCue(); await flush();
     assert.equal(searches.length, afterUpgrade, 'reuse the stronger result for the same position');
+
+    for (const color of ['w', 'b']) {
+        for (const ending of ['mate', 'resign', 'outoftime', 'timeout', 'draw', 'aborted', 'win']) {
+            stopWatching();
+            gameId = `result-${color}-${ending}`; initialFen = undefined; playerColor = color;
+            gameMoves = color === 'w' ? 'e4 e5' : 'e4';
+            enabled = true;
+            await watchPlayer('hand', callbacks); await tick(); await flush();
+            socket = globalThis.brainTestSocket;
+            assert.equal(latestMoveWasMine(), false, 'the result follows an opponent move');
+            const beforeLoss = losses.length;
+            const opponentColor = color === 'w' ? 'black' : 'white';
+            const winner = ['draw', 'aborted'].includes(ending) ? undefined
+                : ending === 'win' ? (color === 'w' ? 'white' : 'black') : opponentColor;
+            const result = { winner, status: { name: ending === 'win' ? 'mate' : ending } };
+            if (ending === 'mate') await emit({ t: 'end' }); // Details can arrive after the game has stopped.
+            await emit({ t: 'endData', d: result });
+            await emit({ t: 'end', d: result });
+            const isLoss = !['draw', 'aborted', 'win'].includes(ending);
+            assert.equal(losses.length - beforeLoss, isLoss ? 1 : 0, `${color} ${ending}: announce a loss only once`);
+            if (isLoss) assert.equal(losses.at(-1).brainPosition, null, 'cancel piece cues before the loss sound');
+        }
+    }
 });
