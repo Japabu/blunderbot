@@ -318,7 +318,6 @@ function startSpectating(guild, channelId, username) {
 		onMoment: moment => play(moment),
 		// Cheat reports only go to the log; the voice channel just hears sus (and X-Files once it's very sus)
 		onGameStart: opponent => {
-			inactivity.activity(true);
 			if (opponent.account?.tosViolation) play('sus');
 		},
 		onCheatAlert: (opponent, summary) => {

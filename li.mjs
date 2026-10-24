@@ -260,6 +260,7 @@ async function poll() {
             currentGameId = gameId;
             currentPlayerColor = color;
             gamePosition = position;
+            callbacks.onGameActivity?.(!position.ended);
             replayedUntil = plies;
             newestPly = plies;
             lastPositionUpdateAt = lastPositionCheckAt = performance.now();
