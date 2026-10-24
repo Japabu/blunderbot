@@ -1,6 +1,32 @@
+import { Chess } from 'chess.js';
+
 // Helpers for the board-only FEN Lichess sends with every move ("rnbqkbnr/pppppppp/8/...")
 
 const KNIGHT_JUMPS = [[1, 2], [2, 1], [2, -1], [1, -2], [-1, -2], [-2, -1], [-2, 1], [-1, 2]];
+const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+
+function higherPieceAttacks(fen, color) {
+    const fields = fen.split(' ');
+    fields[1] = color;
+    fields[3] = '-'; // Compare the mover's possible captures; en passant only targets equal-value pawns.
+    const board = new Chess(fields.join(' '));
+    return new Set(board.moves({ verbose: true })
+        .filter(move => PIECE_VALUES[move.captured] > PIECE_VALUES[move.piece]
+            || (move.piece === 'k' && move.captured === 'q'))
+        .map(move => `${move.from}:${move.to}`));
+}
+
+// Compare exact history snapshots so unrelated quiet moves do not replay an old threat.
+// Legal captures exclude pinned attackers and king moves onto protected squares.
+export function hasNewHigherPieceAttack(beforeFen, afterFen, color) {
+    if (!beforeFen || !afterFen || !['w', 'b'].includes(color)) return false;
+    try {
+        const after = higherPieceAttacks(afterFen, color);
+        if (!after.size) return false;
+        const before = higherPieceAttacks(beforeFen, color);
+        return [...after].some(attack => !before.has(attack));
+    } catch { return false; } // A missing/out-of-sync history must not interrupt the live watcher.
+}
 
 // Piece on a square ("e4") of a FEN board, "." when empty
 export function squareAt(board, square) {

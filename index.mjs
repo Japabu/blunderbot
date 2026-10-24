@@ -192,6 +192,8 @@ function commentary(keyOrSan) {
 }
 
 function moveSound(moveDelta, { before, after, thinkTime, flavor }) {
+	// Let the guaranteed reload finish instead of cutting it off with a fast engine verdict.
+	if (flavor === 'attack_up' && enabled(flavor)) return flavor;
 	const instant = limit => thinkTime !== null && thinkTime < limit;
 	if (enabled('blunder_tiny')) {
 		if (moveDelta <= MISINPUT_DELTA && instant(MISINPUT_TIME)) return "misinput";
