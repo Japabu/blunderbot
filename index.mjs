@@ -48,7 +48,7 @@ const REAL_BLUNDER = -300;
 // Waiting music stops as soon as the next move comes in
 const WAITING_SLOTS = new Set(["opponent_slow", "you_slow"]);
 // Time scramble music only gives way to the big moments
-const BIG_SLOTS = new Set(["delivered_mate", "lost_game", "stalemated", "win_on_time", "misinput", "threw_win", "blunder_big", "blunder_queen", "lost_queen", "queen_trade"]);
+const BIG_SLOTS = new Set(["won_game", "lost_game", "stalemated", "misinput", "threw_win", "blunder_big", "blunder_queen", "lost_queen", "queen_trade"]);
 
 process.on('unhandledRejection', error => {
 	console.error('Unhandled promise rejection:', error);
@@ -302,7 +302,7 @@ function startSpectating(guild, channelId, username) {
 			player.stop(true);
 			brain.moved(move);
 		},
-		// Right away: the board-only sound (capture, fork, mate, ...) or Komarov announcing the move
+		// Right away: a board effect (capture, fork, ...) or Komarov announcing the move
 		onMoveInstant: ({ san, flavor, mine }) => {
 			if (!mine || !flavor || !play(flavor)) commentary(san);
 		},
@@ -324,6 +324,10 @@ function startSpectating(guild, channelId, username) {
 		onGameLoss: () => {
 			brain.reset();
 			play('lost_game', { gameOver: true });
+		},
+		onGameWin: () => {
+			brain.reset();
+			play('won_game', { gameOver: true });
 		},
 		onGameEnd: (opponent, summary) => console.log('Game report:', formatReport(opponent, summary)),
 	});
@@ -379,7 +383,7 @@ async function handleInteraction(interaction) {
 		}
 		await interaction.reply({
 			content: `Settings (saved for this server):\n${Object.entries(settings).map(([key, value]) => `${key}: **${value ? 'on' : 'off'}**`).join('\n')}`
-				+ (settings.hand_and_brain ? '\n\nHand and brain: I name a piece on your turn; you choose its move. Bad-move sounds follow bad_moves; the loss reaction follows misc.' : ''),
+				+ (settings.hand_and_brain ? '\n\nHand and brain: I name a piece on your turn; you choose its move. Bad-move sounds follow bad_moves; game-result sounds follow misc.' : ''),
 			flags: MessageFlags.Ephemeral,
 		});
 	} else if (interaction.commandName === "lichess") {

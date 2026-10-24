@@ -13,8 +13,8 @@ export function soundCategory(slot) {
 
 export function soundEnabled(settings, slot, mine = true, gameOver = false) {
 	const category = soundCategory(slot);
-	// A confirmed loss is a game result, including when the opponent delivered mate.
-	const loss = gameOver && slot === 'lost_game';
-	return (mine || slot === 'komarov' || loss) && settings[category]
-		&& (!settings.hand_and_brain || category === 'bad_moves' || loss);
+	// Confirmed results also apply when the opponent moved last or brain mode is enabled.
+	const result = gameOver && ['lost_game', 'won_game'].includes(slot);
+	return (mine || slot === 'komarov' || result) && settings[category]
+		&& (!settings.hand_and_brain || category === 'bad_moves' || result);
 }

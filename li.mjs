@@ -64,7 +64,7 @@ let waitTimers = [];
 let gamePosition = null;
 let currentPosition = null;
 let newestPly = 0;
-let announcedLossGameId = null;
+let announcedResultGameId = null;
 let lastSocketMessageAt = 0;
 let lastPositionUpdateAt = 0;
 let lastPositionCheckAt = 0;
@@ -138,13 +138,13 @@ let ws = null;
 // onMoveDelta(delta, { before, after, thinkTime, flavor, san }) for the watched player once it's evaluated,
 // onMoment(moment), onCommentary("resign"/"draw"/"think"/"hurry") for results and long thinks,
 // onGameStart(opponent), onCheatAlert(opponent, summary), onGameEnd(opponent, summary),
-// onGameLoss() once Lichess confirms a loss, after invalidating piece cues
+// onGameLoss()/onGameWin() once Lichess confirms a result, after invalidating piece cues
 // onPosition(position|null) invalidates old brain cues immediately; onPositionAnalysis(position, result)
 // is only emitted while that exact position is still current. wantsBrainCue() opts into opening searches.
-// moment: "game_start", "en_passant" (either side), "delivered_mate", "stalemated" (the watched
+// moment: "game_start", "en_passant" (either side), "stalemated" (the watched
 // player stalemated the opponent), "promotion", "knight_promotion" (either side), "check_spam" (third check
-// in a row by the watched player), "opponent_blunder", "win_on_time", "you_slow", "opponent_slow",
-// "time_scramble", or a flavor. All losses, including checkmate, use onGameLoss.
+// in a row by the watched player), "opponent_blunder", "you_slow", "opponent_slow",
+// "time_scramble", or a flavor. Wins and losses, including checkmate, use result callbacks.
 // flavor: what a move did on the board, no engine involved: "queen_trade", "lost_queen", "fork", "headshot",
 // "king_capture", "bloodbath", "first_blood", "double_kill" ... "penta_kill", "opponent_double_kill".
 // On the watched player's moves it comes with onMoveDelta so a real blunder can still win.
@@ -366,17 +366,16 @@ async function handleMessage(gameId, body, receivedAt, socket) {
         const { winner, status } = body.d ?? {};
         const myColor = currentPlayerColor === "w" ? "white" : "black";
         // A bare end can precede the detailed result. Do not let finishing the game swallow that result.
-        const lost = !!(winner && winner !== myColor && announcedLossGameId !== gameId);
+        const result = winner && announcedResultGameId !== gameId ? (winner === myColor ? 'win' : 'loss') : null;
         clearWaitTimers();
         if (cheat && !cheat.finished) {
-            if (winner === myColor && status?.name === "outoftime") moment("win_on_time");
-            else if (winner === myColor && status?.name === "resign") callbacks.onCommentary?.("resign");
-            else if (!winner && ["draw", "stalemate"].includes(status?.name)) callbacks.onCommentary?.("draw");
+            if (!winner && ["draw", "stalemate"].includes(status?.name)) callbacks.onCommentary?.("draw");
         }
         finishGame();
-        if (lost) {
-            announcedLossGameId = gameId;
-            callbacks.onGameLoss?.();
+        if (result) {
+            announcedResultGameId = gameId;
+            if (result === 'win') callbacks.onGameWin?.();
+            else callbacks.onGameLoss?.();
         }
         return;
     }
@@ -425,10 +424,11 @@ async function handleMessage(gameId, body, receivedAt, socket) {
         promotion && mine ? "promotion" :
         mine && checkStreak[lastTurn] === 3 ? "check_spam" :
         flavor;
-    const mate = san?.includes("#") ? (mine ? "delivered_mate" : "lost_game") : null;
+    const mate = san?.includes("#");
     if (!replayed) {
         lastMoveReceivedAt = receivedAt;
-        callbacks.onMoveInstant?.({ ply, san, flavor: mate ?? moveFlavor, mine });
+        // The confirmed result will play one victory/loss clip; do not start a second one here.
+        if (!mate) callbacks.onMoveInstant?.({ ply, san, flavor: moveFlavor, mine });
     }
 
     // Replayed old moves only update the board state; the newest one is still evaluated so the next move
@@ -446,9 +446,8 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     const before = prevPosition?.ply === ply - 1 ? prevPosition : null;
     prevPosition = { ply, score, bestmove };
 
-    // What the engine adds on top of the instant sound: stalemate (no legal moves without check), the good/bad
-    // move verdict for the watched player, or the opponent hanging something. Checkmate was already called
-    // from the "#" in the notation.
+    // The engine adds stalemate (no legal moves without check) and the watched player's good/bad verdict.
+    // Checkmate waits for the confirmed result instead of starting a second reaction here.
     const stalemate = bestmove === "(none)" && score >= 0;
     if (replayed || mate) {
         // Nothing to add: before our time, or the game is over anyway

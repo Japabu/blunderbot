@@ -17,7 +17,7 @@ BlunderBot is a Discord bot that watches your Lichess games and provides **compl
 
 Every slot is a folder in `sounds/` and a random clip from it plays (never the same one twice in a row), so drop more clips in to add variety. Clips are Ogg Opus, the format Discord streams, and preloaded into memory, so a sound starts within milliseconds instead of waiting for ffmpeg: convert with `npx ffmpeg-static` or any ffmpeg, e.g. `ffmpeg -i clip.mp3 -af loudnorm=I=-12 -c:a libopus -b:a 96k -ar 48000 -ac 2 clip.ogg`.
 
-Anything that can be read off the board (captures, forks, en passant, checkmate, ...) or Komarov announcing the move plays the instant a move arrives. The engine's verdict comes a few hundred milliseconds later and only cuts in when it has something better to say, like a blunder.
+Board effects (captures, forks, en passant, ...) or Komarov announcing the move play the instant a move arrives. Win/loss reactions wait for Lichess to confirm the result and play once. The engine's verdict comes a few hundred milliseconds later and only cuts in when it has something better to say, like a blunder.
 
 ### When You Make a Good Move:
 - 💰 **good_move** (+150): Price is Right, "Okay let's go", anime wow, Owen Wilson *wow*
@@ -39,10 +39,9 @@ Anything that can be read off the board (captures, forks, en passant, checkmate,
 - 🍄 **promotion**: Mario power-up, and 🏃 **knight_promotion** (anyone): *why are you running?*
 - ✋ **check_spam**: your third check in a row: *stop, stop, he's already dead*
 - 🤷 **opponent_blunder**: they hang something big: *oh no... anyway*
-- 🏆 **delivered_mate**: GTA mission passed, FF7 victory fanfare, We Are the Champions
+- 🏆 **won_game**: a random win reaction: Gran Turismo 4's failed-test music, GTA mission passed, FF7 victory fanfare, We Are the Champions, or *to be continued*. Plays once per confirmed win, including checkmate, resignation, timeout, or abandonment; follows `misc` and also works in hand-and-brain mode. Never repeats the previous win clip immediately.
 - 💔 **lost_game**: a random loss reaction: *Du bist gut genug*, Emotional Damage, *YOU DIED*, coffin dance, Mario death, or Käsiger Michael. Picks one clip per confirmed loss without repeating the previous clip. Covers checkmate, resignation, running out of time, and abandonment; follows `misc` and also works in hand-and-brain mode. This game-result sound can play after the opponent's final move; ordinary opponent moves still get only Dimitri and piece cues.
 - 🎺 **stalemated**: you stalemated them: sad trombone, *directed by Robert B. Weide*
-- ⏱️ **win_on_time**: *to be continued*
 
 ### Captures (no engine needed, and they beat the good/bad move sound unless it's a real blunder):
 - 🩸 **first_blood**: first capture of the game
