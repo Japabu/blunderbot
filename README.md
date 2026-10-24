@@ -44,7 +44,7 @@ Board effects (captures, forks, en passant, ...) or Komarov announcing the move 
 - 🎺 **stalemated**: you stalemated them: sad trombone, *directed by Robert B. Weide*
 
 ### Captures (no engine needed, and they beat the good/bad move sound unless it's a real blunder):
-- 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Plays immediately and takes priority over engine feedback; follows `misc` and the usual hand-and-brain sound rules. Opponent moves do not trigger it.
+- 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; king attacks, equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Plays immediately and takes priority over engine feedback; follows `misc` and the usual hand-and-brain sound rules. Opponent moves do not trigger it.
 - 😭 **lost_queen**: they take your queen: *NOOOOO*, and 👋 **queen_trade**: *bye, have a great time* / sayonara
 - 🚪 **king_capture**: the king takes something: *I am the one who knocks*
 - 🍴 **fork**: a knight attacks the king and the queen or a rook at once: *surprise*
