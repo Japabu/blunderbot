@@ -62,7 +62,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     const spoken = [];
     const activity = [];
     const instant = [], deltas = [];
-    const losses = [];
+    const losses = [], wins = [];
     let enabled = true;
     const brain = new HandAndBrain({ enabled: () => enabled, speak: piece => spoken.push(piece) });
     t.after(() => { stopWatching(); hooks.deregister(); mock.restoreAll(); delete globalThis.brainTestSocket; });
@@ -76,6 +76,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         onMoveInstant: move => instant.push(move),
         onMoveDelta: (delta, info) => deltas.push(info),
         onGameLoss: () => losses.push({ gameId, brainPosition: brain.position }),
+        onGameWin: () => wins.push({ gameId, brainPosition: brain.position }),
     };
     await watchPlayer('hand', callbacks);
     await tick(); await flush();
@@ -208,7 +209,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     assert.equal(searches.length, afterUpgrade, 'reuse the stronger result for the same position');
 
     for (const color of ['w', 'b']) {
-        for (const ending of ['mate', 'resign', 'outoftime', 'timeout', 'draw', 'aborted', 'win']) {
+        for (const ending of ['mate', 'resign', 'outoftime', 'timeout', 'draw', 'aborted', 'win-mate', 'win-resign', 'win-outoftime', 'win-timeout']) {
             stopWatching();
             gameId = `result-${color}-${ending}`; initialFen = undefined; playerColor = color;
             gameMoves = color === 'w' ? 'e4 e5' : 'e4';
@@ -217,16 +218,33 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
             socket = globalThis.brainTestSocket;
             assert.equal(latestMoveWasMine(), false, 'the result follows an opponent move');
             const beforeLoss = losses.length;
+            const beforeWin = wins.length;
+            const isWin = ending.startsWith('win-');
             const opponentColor = color === 'w' ? 'black' : 'white';
             const winner = ['draw', 'aborted'].includes(ending) ? undefined
-                : ending === 'win' ? (color === 'w' ? 'white' : 'black') : opponentColor;
-            const result = { winner, status: { name: ending === 'win' ? 'mate' : ending } };
-            if (ending === 'mate') await emit({ t: 'end' }); // Details can arrive after the game has stopped.
+                : isWin ? (color === 'w' ? 'white' : 'black') : opponentColor;
+            const result = { winner, status: { name: ending.replace(/^win-/, '') } };
+            if (ending.endsWith('mate')) await emit({ t: 'end' }); // Details can arrive after the game has stopped.
             await emit({ t: 'endData', d: result });
             await emit({ t: 'end', d: result });
-            const isLoss = !['draw', 'aborted', 'win'].includes(ending);
+            const isLoss = !['draw', 'aborted'].includes(ending) && !isWin;
             assert.equal(losses.length - beforeLoss, isLoss ? 1 : 0, `${color} ${ending}: announce a loss only once`);
+            assert.equal(wins.length - beforeWin, isWin ? 1 : 0, `${color} ${ending}: announce a win only once`);
             if (isLoss) assert.equal(losses.at(-1).brainPosition, null, 'cancel piece cues before the loss sound');
+            if (isWin) assert.equal(wins.at(-1).brainPosition, null, 'cancel piece cues before the win sound');
         }
     }
+
+    stopWatching();
+    gameId = 'live-checkmate'; initialFen = undefined; playerColor = 'b'; gameMoves = 'f3 e5 g4';
+    await watchPlayer('hand', callbacks); await tick(); await flush();
+    socket = globalThis.brainTestSocket;
+    const matingBoard = new Chess();
+    for (const san of gameMoves.split(' ')) matingBoard.move(san);
+    const mate = matingBoard.move('Qh4#');
+    const beforeInstant = instant.length, beforeWin = wins.length;
+    await emit({ t: 'move', d: { fen: matingBoard.fen().split(' ')[0], ply: 4, san: mate.san, uci: mate.lan } });
+    assert.equal(instant.length, beforeInstant, 'mate must not start another sound before the confirmed result');
+    await emit({ t: 'endData', d: { winner: 'black', status: { name: 'mate' } } });
+    assert.equal(wins.length - beforeWin, 1);
 });

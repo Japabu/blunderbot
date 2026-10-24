@@ -31,15 +31,18 @@ test('opponent moves permit only Dimitri commentary, with every sound category e
     assert.equal(soundEnabled({ ...BOT_DEFAULTS, hand_and_brain: true }, 'blunder_big', true), true);
 });
 
-test('a confirmed loss follows misc even after an opponent move and in hand-and-brain mode', () => {
+test('confirmed wins and losses follow misc even after an opponent move and in hand-and-brain mode', () => {
     for (const mine of [false, true]) {
         for (const hand_and_brain of [false, true]) {
             const settings = { ...BOT_DEFAULTS, hand_and_brain };
-            assert.equal(soundEnabled(settings, 'lost_game', mine, true), true);
-            assert.equal(soundEnabled({ ...settings, misc: false }, 'lost_game', mine, true), false);
+            for (const slot of ['lost_game', 'won_game']) {
+                assert.equal(soundEnabled(settings, slot, mine, true), true);
+                assert.equal(soundEnabled({ ...settings, misc: false }, slot, mine, true), false);
+            }
         }
     }
     assert.equal(soundEnabled(BOT_DEFAULTS, 'lost_game', false), false, 'ordinary opponent moves stay quiet');
+    assert.equal(soundEnabled(BOT_DEFAULTS, 'won_game', false), false);
     for (const slot of ['double_kill', 'blunder_big', 'good_move', 'sus']) {
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, false, true), false, slot);
     }
