@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, watchFile, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { Readable } from 'node:stream';
 
@@ -13,37 +13,14 @@ import { BOT_DEFAULTS, soundEnabled } from './sound-settings.mjs';
 import { HandAndBrain, PIECE_NAMES } from './hand-and-brain.mjs';
 import { watchVoiceConnection } from './voice.mjs';
 import { InactivityTimer } from './inactivity.mjs';
+import { SoundRules, eventFor, atomicJson } from './sound-rules.mjs';
+import { classifyMove } from './move-quality.mjs';
 
 const settingsStore = new SettingsStore('./data/settings.json', BOT_DEFAULTS);
 let activeGuildId = null;
-const enabled = (slot, gameOver = false) => soundEnabled(settingsStore.get(activeGuildId), slot, latestMoveWasMine(), gameOver);
+const soundRules = new SoundRules();
+const enabled = (slot, gameOver = false, mine = latestMoveWasMine()) => soundEnabled(settingsStore.get(activeGuildId), slot, mine, gameOver, soundRules.get(activeGuildId, slot));
 const brainEnabled = () => settingsStore.get(activeGuildId).hand_and_brain;
-
-// Each sound slot is a folder in sounds/, and a random clip from it plays
-const BAD_SOUND_EFFECTS = [
-	["blunder_queen", -800],
-	["blunder_big", -300],
-	["blunder_medium", -150],
-	["blunder_small", -100],
-	["blunder_tiny", -50],
-]
-
-const GOOD_SOUND_EFFECTS = [
-	["great_move", 300],
-	["good_move", 150],
-]
-
-// Clearly winning before the move, equal or worse after it
-const THREW_WIN_BEFORE = 500;
-const THREW_WIN_AFTER = 100;
-
-// Think times (seconds) for "that was instant": a fast blunder is a misinput, a fast good move is gotta-go-fast
-const MISINPUT_TIME = 1;
-const MISINPUT_DELTA = -300;
-const FAST_MOVE_TIME = 0.5;
-
-// A move at least this bad plays its blunder sound even if it also captured something fun
-const REAL_BLUNDER = -300;
 
 // Waiting music stops as soon as the next move comes in
 const WAITING_SLOTS = new Set(["opponent_slow", "you_slow"]);
@@ -87,6 +64,9 @@ await rest.put(Routes.applicationCommands(process.env.CLIENT_ID), { body: comman
 
 async function registerServerConfig(guild) {
 	try {
+		let guilds = {};
+		try { guilds = JSON.parse(readFileSync('./data/guilds.json', 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+		atomicJson('./data/guilds.json', { ...guilds, [guild.id]: guild.name });
 		await rest.post(Routes.applicationGuildCommands(process.env.CLIENT_ID, guild.id), { body: configCommand });
 		console.log(`Registered /config in ${guild.name}`);
 	} catch (error) {
@@ -132,20 +112,33 @@ const brain = new HandAndBrain({
 	},
 });
 
+watchFile('./data/settings.json', { interval: 1000, persistent: false }, () => {
+	if (!activeGuildId) return;
+	brain.reset();
+	if (nowPlaying === 'hand_and_brain' || (nowPlaying && !enabled(nowPlaying))) player.stop();
+	requestBrainCue();
+});
+watchFile('./data/sound-rules.json', { interval: 1000, persistent: false }, () => {
+	if (activeGuildId && nowPlaying && nowPlaying !== 'hand_and_brain' && !enabled(nowPlaying)) player.stop();
+});
+
 // Plays a random clip of a slot, never the same one twice in a row
-function play(slot, { gameOver = false } = {}) {
+function play(slot, { gameOver = false, mine = latestMoveWasMine() } = {}) {
 	// A piece cue takes priority over blunder feedback; the next cue can also interrupt a meme clip.
 	if (!gameOver && brainEnabled() && nowPlaying === 'hand_and_brain') return false;
-	if (!enabled(slot, gameOver)) return false;
-	const clips = SOUND_POOLS[slot] ?? [];
+	if (!enabled(slot, gameOver, mine)) return false;
+	const rule = soundRules.get(activeGuildId, slot);
+	const pool = eventFor(slot)?.pool ?? slot;
+	const clips = rule.clips === null ? (SOUND_POOLS[pool] ?? []).map(clip => `${pool}/${clip}`) : rule.clips;
 	if (!clips.length) return console.error('No sounds for', slot);
 	if (nowPlaying === 'time_scramble' && !BIG_SLOTS.has(slot)) return;
 	const choices = clips.length > 1 ? clips.filter(clip => clip !== lastPlayed[slot]) : clips;
 	const clip = choices[Math.floor(Math.random() * choices.length)];
 	lastPlayed[slot] = clip;
 	nowPlaying = slot;
-	console.log(`Sound: ${slot}/${clip}`);
-	startPlaying(`${slot}/${clip}`, `./sounds/${slot}/${clip}`);
+	const path = clip.startsWith('custom/') ? `./data/${clip}` : `./sounds/${clip}`;
+	console.log(`Sound: ${slot} → ${clip}`);
+	startPlaying(`${slot}/${clip}`, path);
 	return true;
 }
 
@@ -191,22 +184,14 @@ function commentary(keyOrSan) {
 	startPlaying(`komarov/${clip}`, `./commentary/komarov/${clip}`);
 }
 
-function moveSound(moveDelta, { before, after, thinkTime, flavor }) {
+function moveSound(moveDelta, { before, after, thinkTime, flavor, bestmove, uci }) {
 	// Let the guaranteed reload finish instead of cutting it off with a fast engine verdict.
-	if (flavor === 'attack_up' && enabled(flavor)) return flavor;
-	const instant = limit => thinkTime !== null && thinkTime < limit;
-	if (enabled('blunder_tiny')) {
-		if (moveDelta <= MISINPUT_DELTA && instant(MISINPUT_TIME)) return "misinput";
-		if (before >= THREW_WIN_BEFORE && after <= THREW_WIN_AFTER) return "threw_win";
-		if (moveDelta <= REAL_BLUNDER) return BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
-	}
+	if (['attack_up', 'discovery'].includes(flavor) && enabled(flavor)) return flavor;
+	const quality = classifyMove({ before, after, thinkTime, bestmove, uci });
+	if (quality?.grade === 'blunder' && enabled(quality.slot)) return quality.slot;
 	// Otherwise what happened on the board (a capture, a fork, ...) beats the engine's opinion
 	if (flavor && enabled(flavor)) return flavor;
-	if (moveDelta < 0) return BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
-
-	const good = GOOD_SOUND_EFFECTS.find(([_, delta]) => moveDelta >= delta)?.[0];
-	if (good && instant(FAST_MOVE_TIME)) return "fast_good_move";
-	return good;
+	return quality?.slot;
 }
 
 player.on('error', error => {
@@ -306,7 +291,7 @@ function startSpectating(guild, channelId, username) {
 		},
 		// Right away: a board effect (capture, fork, ...) or Komarov announcing the move
 		onMoveInstant: ({ san, flavor, mine }) => {
-			if (!mine || !flavor || !play(flavor)) commentary(san);
+			if (!flavor || !play(flavor, { mine })) commentary(san);
 		},
 		// Once the engine is done: only cut in if the verdict is something other than what's already playing
 		onMoveDelta: (moveDelta, info) => {

@@ -1,7 +1,7 @@
 export const SOUND_DEFAULTS = { dimitri: true, good_moves: true, bad_moves: true, misc: true };
 export const BOT_DEFAULTS = { ...SOUND_DEFAULTS, hand_and_brain: false };
 
-const GOOD = new Set(['good_move', 'great_move', 'fast_good_move']);
+const GOOD = new Set(['good_move', 'great_move', 'excellent_move']);
 const BAD = new Set(['blunder_tiny', 'blunder_small', 'blunder_medium', 'blunder_big', 'blunder_queen', 'misinput', 'threw_win']);
 
 export function soundCategory(slot) {
@@ -11,10 +11,14 @@ export function soundCategory(slot) {
 	return 'misc';
 }
 
-export function soundEnabled(settings, slot, mine = true, gameOver = false) {
+export function soundEnabled(settings, slot, mine = true, gameOver = false, override) {
 	const category = soundCategory(slot);
-	// Confirmed results also apply when the opponent moved last or brain mode is enabled.
+	const event = eventFor(slot);
+	const rule = override ?? defaultRule(slot);
 	const result = gameOver && ['lost_game', 'won_game'].includes(slot);
-	return (mine || slot === 'komarov' || result) && settings[category]
+	const sideAllowed = slot === 'komarov' || event?.group === 'game' || result
+		|| (rule.side === 'both' || (mine ? rule.side === 'you' : rule.side === 'opponent'));
+	return rule.enabled && sideAllowed && (mine || event?.group !== 'quality') && settings[category]
 		&& (!settings.hand_and_brain || category === 'bad_moves' || result);
 }
+import { defaultRule, eventFor } from './sound-rules.mjs';

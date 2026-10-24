@@ -8,7 +8,7 @@ import { BOT_DEFAULTS, SOUND_DEFAULTS, soundCategory, soundEnabled } from '../so
 
 test('all shipped sound slots are covered and the four switches are independent', () => {
 	const expected = {
-		good_moves: ['good_move', 'great_move', 'fast_good_move'],
+		good_moves: ['good_move', 'great_move', 'excellent_move'],
 		bad_moves: ['blunder_tiny', 'blunder_small', 'blunder_medium', 'blunder_big', 'blunder_queen', 'misinput', 'threw_win'],
 	};
 	const slots = readdirSync(new URL('../sounds/', import.meta.url), { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
@@ -21,13 +21,19 @@ test('all shipped sound slots are covered and the four switches are independent'
 	}
 });
 
-test('opponent moves permit only Dimitri commentary, with every sound category enabled', () => {
-    const slots = readdirSync(new URL('../sounds/', import.meta.url), { withFileTypes: true })
-        .filter(entry => entry.isDirectory()).map(entry => entry.name);
-    for (const slot of slots) assert.equal(soundEnabled(BOT_DEFAULTS, slot, false), false, slot);
+test('quality judges your moves, while special moves and game events use independent rules', () => {
+    for (const slot of ['good_move', 'great_move', 'excellent_move', 'blunder_big']) {
+        assert.equal(soundEnabled(BOT_DEFAULTS, slot, false), false, slot);
+    }
+    for (const slot of ['attack_up', 'discovery', 'fork', 'promotion', 'en_passant', 'time_scramble', 'opponent_slow', 'you_slow', 'game_start']) {
+        assert.equal(soundEnabled(BOT_DEFAULTS, slot, false), true, slot);
+        assert.equal(soundEnabled(BOT_DEFAULTS, slot, true), true, slot);
+        assert.equal(soundEnabled(BOT_DEFAULTS, slot, false, false, {enabled: true, side: 'you'}), slot.includes('slow') || ['time_scramble','game_start'].includes(slot));
+        assert.equal(soundEnabled(BOT_DEFAULTS, slot, true, false, {enabled: false, side: 'both'}), false);
+    }
     assert.equal(soundEnabled(BOT_DEFAULTS, 'komarov', false), true);
     assert.equal(soundEnabled({ ...BOT_DEFAULTS, dimitri: false }, 'komarov', false), false);
-    assert.equal(soundEnabled({ ...BOT_DEFAULTS, hand_and_brain: true }, 'blunder_big', false), false);
+    assert.equal(soundEnabled({ ...BOT_DEFAULTS, hand_and_brain: true }, 'attack_up', false), false);
     assert.equal(soundEnabled({ ...BOT_DEFAULTS, hand_and_brain: true }, 'blunder_big', true), true);
 });
 
@@ -41,9 +47,7 @@ test('confirmed wins and losses follow misc even after an opponent move and in h
             }
         }
     }
-    assert.equal(soundEnabled(BOT_DEFAULTS, 'lost_game', false), false, 'ordinary opponent moves stay quiet');
-    assert.equal(soundEnabled(BOT_DEFAULTS, 'won_game', false), false);
-    for (const slot of ['attack_up', 'blunder_big', 'good_move', 'sus']) {
+    for (const slot of ['blunder_big', 'good_move']) {
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, false, true), false, slot);
     }
 });
@@ -95,7 +99,7 @@ test('hand-and-brain permits all bad-move effects when enabled and suppresses ot
 		assert.equal(soundEnabled(settings, slot), true, slot);
 		assert.equal(soundEnabled({ ...settings, bad_moves: false }, slot), false, slot);
 	}
-	for (const slot of ['komarov', 'good_move', 'great_move', 'fast_good_move', 'attack_up', 'time_scramble', 'sus', 'game_start']) {
+	for (const slot of ['komarov', 'good_move', 'great_move', 'excellent_move', 'attack_up', 'time_scramble', 'sus', 'game_start']) {
 		assert.equal(soundEnabled(settings, slot), false, slot);
 		assert.equal(soundEnabled({ ...settings, hand_and_brain: false }, slot), true, slot);
 	}

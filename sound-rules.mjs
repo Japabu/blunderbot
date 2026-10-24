@@ -1,0 +1,93 @@
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+
+const event = (id, name, group, description, pool = id, extra = {}) => ({ id, name, group, description, pool, ...extra });
+export const EVENTS = [
+    event('great_move', 'Best move', 'quality', 'You found the engine’s best move and lost less than 2 percentage points.'),
+    event('excellent_move', 'Excellent move', 'quality', 'Almost best: less than 2 percentage points lost.', 'good_move'),
+    event('good_move', 'Good move', 'quality', 'Between 2 and 5 percentage points lost.'),
+    event('blunder_tiny', 'Inaccuracy', 'quality', 'Between 5 and 10 percentage points lost.'),
+    event('blunder_small', 'Mistake', 'quality', 'Between 10 and 20 percentage points lost.'),
+    event('blunder_medium', 'Blunder', 'quality', 'Between 20 and 30 percentage points lost.'),
+    event('blunder_big', 'Big blunder', 'quality', 'Between 30 and 45 percentage points lost.'),
+    event('blunder_queen', 'Huge blunder', 'quality', 'At least 45 percentage points lost; not necessarily a queen.'),
+    event('misinput', 'Instant blunder', 'quality', 'A blunder played in less than one second.'),
+    event('threw_win', 'Thrown win', 'quality', 'From +5 or better to +1 or worse, losing at least 10 percentage points.'),
+    event('attack_up', 'Attack a higher piece', 'special', 'A new legal threat: pawn < knight/bishop < rook < queen. Kings never trigger it.'),
+    event('discovery', 'Discovered attack', 'special', 'Moving one piece uncovers a new attack by a bishop, rook or queen. xQc, first five seconds.'),
+    event('castle', 'Castling', 'special', 'Kingside or queenside castling.', null, { enabled: false }),
+    event('capture', 'Any capture', 'special', 'An ordinary capture without a more specific event.', null, { enabled: false }),
+    event('en_passant', 'En passant', 'special', 'An en passant capture.'),
+    event('promotion', 'Promotion', 'special', 'Promoting a pawn to a queen, rook or bishop.'),
+    event('knight_promotion', 'Knight promotion', 'special', 'Underpromoting to a knight.'),
+    event('check_spam', 'Three checks in a row', 'special', 'The same player gives check on three successive turns.'),
+    event('fork', 'Knight fork', 'special', 'A knight attacks the king and a queen or rook.'),
+    event('king_capture', 'King captures', 'special', 'A king captures a piece. This is separate from the gun sound.'),
+    event('lost_queen', 'Your queen is captured', 'special', 'The opponent captures your queen.'),
+    event('queen_trade', 'Queen exchange', 'special', 'Both queens are captured on consecutive moves.'),
+    event('game_start', 'Game starts', 'game', 'A new game is found before the second move.'),
+    event('won_game', 'You win', 'game', 'A confirmed win, including mate, resignation, timeout or abandonment.'),
+    event('lost_game', 'You lose', 'game', 'A confirmed loss, including mate, resignation, timeout or abandonment.'),
+    event('stalemated', 'You give stalemate', 'game', 'Your move leaves the opponent with no legal move and no check.'),
+    event('you_slow', 'You take too long', 'game', 'After 15% of the starting time, with a minimum waiting period.'),
+    event('opponent_slow', 'Opponent takes too long', 'game', 'Waiting music while your opponent thinks.'),
+    event('time_scramble', 'Time scramble', 'game', 'Both clocks are below ten seconds, once per game.'),
+    event('sus', 'Lichess account flag', 'game', 'The opponent has a Lichess terms-of-service flag at game start.'),
+];
+export const EVENT_IDS = new Set(EVENTS.map(event => event.id));
+export const eventFor = id => EVENTS.find(event => event.id === id);
+export function defaultRule(id) {
+    const event = eventFor(id);
+    return { enabled: event?.enabled ?? true, side: event?.group === 'quality' ? 'you' : 'both', clips: null };
+}
+
+function readJson(path, fallback) {
+    try { return JSON.parse(readFileSync(path, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return fallback; throw error; }
+}
+export function atomicJson(path, value) {
+    mkdirSync(dirname(path), { recursive: true });
+    const temp = `${path}.${process.pid}.tmp`;
+    writeFileSync(temp, JSON.stringify(value, null, 2));
+    renameSync(temp, path);
+}
+export function soundLibrary(root = '.') {
+    const clips = [];
+    for (const dir of readdirSync(join(root, 'sounds'), { withFileTypes: true })) {
+        if (!dir.isDirectory() || dir.name === 'fast_good_move') continue;
+        for (const file of readdirSync(join(root, 'sounds', dir.name)).filter(file => file.endsWith('.ogg'))) {
+            clips.push({ id: `${dir.name}/${file}`, name: file.replace(/\.ogg$/, '').replaceAll('_', ' '), pool: dir.name,
+                path: join(root, 'sounds', dir.name, file) });
+        }
+    }
+    for (const clip of readJson(join(root, 'data/custom-sounds.json'), [])) {
+        if (/^custom\/[a-f0-9-]+\.ogg$/.test(clip.id)) clips.push({ ...clip, pool: 'custom', path: join(root, 'data', clip.id) });
+    }
+    return clips;
+}
+export function validateRules(rules, library, complete = false) {
+    const ids = new Set(library.map(clip => clip.id));
+    if (!rules || typeof rules !== 'object' || Array.isArray(rules)
+        || (complete && Object.keys(rules).length !== EVENTS.length)) throw Error('Invalid or incomplete rules');
+    const clean = {};
+    for (const [id, rule] of Object.entries(rules)) {
+        if (!EVENT_IDS.has(id) || !rule || typeof rule.enabled !== 'boolean' || !['you', 'opponent', 'both'].includes(rule.side)) throw Error('Invalid event rule');
+        if (eventFor(id).group === 'quality' && rule.side !== 'you') throw Error('Move quality is for your moves only');
+        if (rule.clips !== null && (!Array.isArray(rule.clips) || rule.clips.length > 50 || rule.clips.some(id => !ids.has(id)))) throw Error('Unknown sound in pool');
+        clean[id] = { enabled: rule.enabled, side: rule.side, clips: rule.clips === null ? null : [...new Set(rule.clips)] };
+    }
+    return clean;
+}
+export class SoundRules {
+    constructor(path = './data/sound-rules.json') { this.path = path; this.stamp = null; this.guilds = {}; }
+    refresh() {
+        const stamp = existsSync(this.path) ? `${statSync(this.path).mtimeMs}:${statSync(this.path).size}` : 'missing';
+        if (stamp !== this.stamp) { this.guilds = readJson(this.path, {}); this.stamp = stamp; }
+    }
+    get(guild, id) { this.refresh(); return { ...defaultRule(id), ...this.guilds[guild]?.[id] }; }
+    all(guild) { return Object.fromEntries(EVENTS.map(event => [event.id, this.get(guild, event.id)])); }
+    save(guild, rules, library = soundLibrary()) {
+        const clean = validateRules(rules, library);
+        this.refresh(); atomicJson(this.path, { ...this.guilds, [guild]: clean }); this.stamp = null;
+        return this.all(guild);
+    }
+}
