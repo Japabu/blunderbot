@@ -7,6 +7,8 @@ import { GamePosition } from './hand-and-brain.mjs';
 import { verifyBrilliant, verifyGreat } from './brilliant.mjs';
 import { waitingPlan } from './timing.mjs';
 import { confirmBadMove } from './quality-confirmation.mjs';
+import { queenLoss } from './queen-loss.mjs';
+import { QueenChase } from './queen-chase.mjs';
 
 
 async function getGameInfo(gameId, playerName) {
@@ -28,7 +30,7 @@ async function getGameInfo(gameId, playerName) {
 
     const { white, black } = game?.players ?? {};
     const opponentOf = side => ({ name: side?.user?.name ?? "anonymous", rating: side?.rating, speed: game.speed, clock: game.clock });
-    const result = { finished: typeof game.status === 'string' && !['created', 'started'].includes(game.status), winner: game.winner };
+    const result = { finished: typeof game.status === 'string' && !['created', 'started'].includes(game.status), winner: game.winner, status: game.status };
     const position = new GamePosition(game);
     const plies = position.valid ? position.ply : (game.moves?.trim().split(/\s+/).filter(Boolean).length ?? 0);
 
@@ -60,6 +62,8 @@ let prevClocks = null;   // { white, black } seconds left after the previous mov
 let prevBoard = null;    // board after the previous move
 let checkStreak = { w: 0, b: 0 };   // consecutive checking moves per side
 let queenTaken = null;              // { ply, white } of the last queen capture, to spot queen trades
+let verifiedSacrifice = null;       // only the immediately preceding verified Brilliant offer
+const queenChase = new QueenChase();
 let scrambled = false;              // time scramble already announced this game
 let replayedUntil = 0;              // on connect Lichess replays recent moves; up to this ply they stay silent
 let waitTimers = [];
@@ -187,7 +191,7 @@ async function poll() {
                     callbacks.onGameActivity?.(true);
                     return; // A transient status response must not close a live game.
                 }
-                announceResult(previousGame, info.winner);
+                announceResult(previousGame, info.winner, info.status);
                 closeGame();
             }
             return;
@@ -196,9 +200,15 @@ async function poll() {
         // A new game can appear before the old socket delivers its detailed result.
         if (currentGameId && gameId !== currentGameId && announcedResultGameId !== currentGameId) {
             const previousGame = currentGameId;
-            const info = await getGameInfo(previousGame, polledPlayer);
+            try {
+                const info = await getGameInfo(previousGame, polledPlayer);
+                if (polledPlayer !== currentPlayerName || previousGame !== currentGameId) return;
+                if (info.finished) announceResult(previousGame, info.winner, info.status);
+            } catch (error) {
+                console.error('Could not recover previous result:', error.message);
+                // An unavailable old export must not prevent attaching to the new game.
+            }
             if (polledPlayer !== currentPlayerName || previousGame !== currentGameId) return;
-            if (info.finished) announceResult(previousGame, info.winner);
         }
 
         // An open TCP connection can stop delivering game events. Lichess answers our pings with 0.
@@ -214,16 +224,18 @@ async function poll() {
             const playerName = currentPlayerName;
             const info = await getGameInfo(gameId, playerName);
             if (playerName !== currentPlayerName || gameId !== currentGameId) return;
+            if (info.finished) { announceResult(gameId, info.winner, info.status); return; }
             // Exports can lag behind the live socket. Never roll a healthy board back to cached history.
             if (info.position.valid && info.position.ply < newestPly) return;
             if (info.position.valid && (gamePosition?.needsSync || info.position.ply > newestPly || info.position.ended)) {
                 console.log('Resynchronized game:', gameId, 'ply:', info.position.ply);
                 gamePosition = info.position;
+                queenChase.reset();
                 newestPly = info.position.ply;
                 replayedUntil = newestPly;
                 clearWaitTimers();
                 setCurrentPosition(gamePosition.current);
-                if (gamePosition.ended) announceResult(gameId, info.winner);
+                if (gamePosition.ended) announceResult(gameId, info.winner, info.status);
                 else requestBrainCue();
             }
         }
@@ -235,7 +247,7 @@ async function poll() {
         if (!ws || ws.readyState === WebSocket.CLOSED) {
             if (gameId !== currentGameId) finishGame();
             const playerName = currentPlayerName;
-            let { color, opponent, plies, position } = await getGameInfo(gameId, playerName);
+            let { color, opponent, plies, position, finished, winner, status } = await getGameInfo(gameId, playerName);
             if (playerName !== currentPlayerName) return;
             if (gameId === currentGameId && gamePosition?.valid && position.valid && position.ply < gamePosition.ply) {
                 position = gamePosition;
@@ -244,19 +256,21 @@ async function poll() {
             currentGameId = gameId;
             currentPlayerColor = color;
             gamePosition = position;
-            callbacks.onGameActivity?.(!position.ended);
+            callbacks.onGameActivity?.(!finished && !position.ended);
             replayedUntil = plies;
             newestPly = plies;
             lastPositionUpdateAt = lastPositionCheckAt = performance.now();
             console.log("player color:", currentPlayerColor, "opponent:", opponent.name, "plies so far:", plies);
             if (!cheat || cheat.gameId !== gameId) {
                 // Ring the bell as soon as the game is found, not when white gets around to the first move
-                if (plies <= 1) moment("game_start");
-                opponent.account = opponent.name === "anonymous" ? null : await fetchAccount(opponent.name);
+                if (plies <= 1 && !finished && !position.ended) moment("game_start");
+                opponent.account = finished || opponent.name === "anonymous" ? null : await fetchAccount(opponent.name);
+                if (playerName !== currentPlayerName || gameId !== currentGameId) return;
                 cheat = new CheatDetector(opponent);
                 cheat.gameId = gameId;
-                callbacks.onGameStart?.(opponent);
+                if (!finished && !position.ended) callbacks.onGameStart?.(opponent);
             }
+            if (finished || position.ended) { announceResult(gameId, winner, status); return; }
             connectToGame(gameId);
             setCurrentPosition(position.valid ? position.current : null);
             requestBrainCue();
@@ -282,14 +296,23 @@ function finishGame() {
     callbacks.onGameEnd?.(cheat.opponent, cheat.summary());
 }
 
-function announceResult(gameId, winner) {
+function announceResult(gameId, winner, status) {
     clearWaitTimers();
     finishGame();
-    if (!['white', 'black'].includes(winner) || announcedResultGameId === gameId) return;
+    if (announcedResultGameId === gameId) return;
+    status = typeof status === 'string' ? status : status?.name;
+    if (!['white', 'black'].includes(winner)) {
+        if (['draw', 'stalemate', 'aborted', 'noStart'].includes(status)) {
+            announcedResultGameId = gameId;
+            if (['draw', 'stalemate'].includes(status)) callbacks.onCommentary?.('draw');
+        }
+        return;
+    }
     announcedResultGameId = gameId;
     const myColor = currentPlayerColor === 'w' ? 'white' : 'black';
-    if (winner === myColor) callbacks.onGameWin?.();
-    else callbacks.onGameLoss?.();
+    const info = { gameId, status };
+    if (winner === myColor) callbacks.onGameWin?.(info);
+    else callbacks.onGameLoss?.(info);
 }
 
 function closeGame() {
@@ -297,6 +320,8 @@ function closeGame() {
     finishGame();
     currentGameId = null;
     gamePosition = null;
+    verifiedSacrifice = null;
+    queenChase.reset();
     try { ws?.close(); } catch (ignored) { }
     ws = null;
 }
@@ -304,6 +329,7 @@ function closeGame() {
 function reconnectGame(reason) {
     console.log('Reconnecting game feed:', reason);
     clearWaitTimers();
+    queenChase.reset();
     setCurrentPosition(null);
     const socket = ws;
     ws = null; // Ignore late messages and searches from the old connection immediately.
@@ -350,6 +376,8 @@ function connectToGame(gameId) {
     prevBoard = null;
     checkStreak = { w: 0, b: 0 };
     queenTaken = null;
+    verifiedSacrifice = null;
+    queenChase.reset();
     scrambled = false;
     clearWaitTimers();
 
@@ -391,11 +419,8 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     }
     if (messageType === "endData" || messageType === "end") {
         const { winner, status } = body.d ?? {};
-        if (cheat && !cheat.finished) {
-            if (!winner && ["draw", "stalemate"].includes(status?.name)) callbacks.onCommentary?.("draw");
-        }
         // A bare end can precede details; polling also reconciles confirmed results.
-        announceResult(gameId, winner);
+        announceResult(gameId, winner, status);
         return;
     }
     if (messageType !== "move") return;
@@ -428,9 +453,20 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     const clockBefore = prevClocks?.[moverClock];
     if (clock) prevClocks = clock;
 
-    const enPassant = isEnPassant(prevBoard, fen, uci);
-    const capture = captureInfo(prevBoard, uci, enPassant);
-    const flavor = boardFlavor(prevBoard, fen, uci, capture, ply, lastTurn, mine);
+    const enPassant = tracked?.move ? tracked.move.isEnPassant() : isEnPassant(prevBoard, fen, uci);
+    const capture = tracked?.move
+        ? tracked.move.captured ? { captured: tracked.move.captured, capturer: tracked.move.piece } : null
+        : captureInfo(prevBoard, uci, enPassant);
+    const offeredSquare = verifiedSacrifice?.gameId === gameId && verifiedSacrifice.ply === ply - 1 ? verifiedSacrifice.square : null;
+    verifiedSacrifice = null;
+    const chasingQueen = !replayed && queenChase.observe({
+        beforeFen: gamePosition?.snapshots.get(ply - 1)?.fen, afterFen: tracked?.fen,
+        move: tracked?.move, ply,
+    });
+    const flavor = boardFlavor(prevBoard, fen, uci, capture, ply, lastTurn, mine, {
+        beforeFen: gamePosition?.snapshots.get(ply - 1)?.fen, afterFen: tracked?.fen,
+        move: tracked?.move, verifiedSacrificeSquare: offeredSquare,
+    });
     prevBoard = fen;
 
     checkStreak[lastTurn] = san?.includes("+") ? checkStreak[lastTurn] + 1 : 0;
@@ -445,6 +481,7 @@ async function handleMessage(gameId, body, receivedAt, socket) {
         promotion === "n" ? "knight_promotion" :
         promotion ? "promotion" :
         tracked?.move?.isKingsideCastle() || tracked?.move?.isQueensideCastle() ? 'castle' :
+        chasingQueen ? 'queen_chase' :
         checkStreak[lastTurn] === 3 ? "check_spam" :
         flavor === 'fork' ? 'fork' :
         attackFlavor ? attackFlavor :
@@ -508,7 +545,8 @@ async function handleMessage(gameId, body, receivedAt, socket) {
             } catch (error) { qualityUnknown = !!callbacks.wantsBadMoves?.(); console.error('Move verification failed:', error.message); }
         }
         console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}, flavor: ${moveFlavor}`);
-        if (ply === newestPly && !cheat?.finished) {
+        if (gameId === currentGameId && socket === ws && ply === newestPly && !cheat?.finished) {
+            if (brilliant) verifiedSacrifice = { gameId, ply, square: brilliant.sacrifice };
             callbacks.onMoveDelta?.(moveDelta, { ...quality, qualityUnknown, qualityConfirmed, thinkTime, flavor: moveFlavor, san, uci, brilliant, great });
         }
     }
@@ -526,13 +564,14 @@ function moment(name) {
 }
 
 // What the move did on the board, most remarkable first. Retains the last queen capture for trades.
-function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine) {
-    if (!prevBoard) return null;
+function boardFlavor(prevBoard, board, uci, capture, ply, lastTurn, mine, context) {
+    if (!prevBoard && !context?.beforeFen) return null;
 
     let queenFlavor = null;
     if (capture?.captured === "q") {
         const white = lastTurn !== "w"; // the captured queen's color
-        queenFlavor = queenTaken?.ply === ply - 1 && queenTaken.white !== white ? "queen_trade" : !mine ? "lost_queen" : null;
+        queenFlavor = queenTaken?.ply === ply - 1 && queenTaken.white !== white ? 'queen_trade'
+            : !mine ? queenLoss({ ...context, watchedColor: currentPlayerColor })?.slot : null;
         queenTaken = { ply, white };
     }
 
@@ -548,7 +587,8 @@ function watchThinkTime(gameId, ply, turn, initial) {
     clearWaitTimers();
     // The clock only starts once both sides made their first move
     if (ply < 2 || !initial) return;
-    const stillThinking = () => gameId === currentGameId && !cheat?.finished;
+    const socket = ws;
+    const stillThinking = () => gameId === currentGameId && socket === ws && ply === newestPly && !cheat?.finished;
     const after = (seconds, fn) => waitTimers.push(setTimeout(() => stillThinking() && fn(), seconds * 1000));
     for (const step of waitingPlan(initial, cheat?.opponent.speed, callbacks.waitingTiming?.())) {
         after(step.seconds, () => step.waiting

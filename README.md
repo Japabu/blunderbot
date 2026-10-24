@@ -38,7 +38,7 @@ The bands follow [Chess.com's published classifications](https://support.chess.c
 
 A blunder played within one second uses `misinput`. Losing at least 10 percentage points while going from +5 or better to +1 or worse uses `threw_win` (unless it is an instant blunder). Missing/stale before-position analysis never produces a guessed grade.
 
-Suspected inaccuracies, mistakes and blunders are confirmed with depth-12+ before/after searches before playing a bad sound. Existing deeper searches are reused. Ordinary moves receive no extra grading searches; cancelled or failed confirmation stays silent. Confirmed results are also reconciled from the game export when status polling loses the playing ID or the socket misses result details.
+Suspected inaccuracies, mistakes and blunders are confirmed with depth-12+ before/after searches before playing a bad sound. A bad move never falls through to a board sound merely because its bad-event sound is muted. Existing deeper searches are reused. Ordinary moves receive no extra grading searches; cancelled or failed confirmation stays silent. Confirmed results are also reconciled from the game export when status polling loses the playing ID or the socket misses result details, including completed exports whose move histories lag behind the live board. Waiting audio stops even if every result sound is muted.
 
 Obvious immediate recaptures do not earn Great, even when all other moves lose material. Brilliant sacrifices and specific board events still have their separate checks.
 
@@ -55,12 +55,15 @@ Obvious immediate recaptures do not earn Great, even when all other moves lose m
 - 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; king attacks, equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Uses the one-reaction-per-move policy; mistakes and verified exceptional moves take priority; follows `misc` and the usual hand-and-brain sound rules. The control room chooses your moves, opponent moves, or both; default is both. It only considers the piece that moved, excludes unchanged threats, checks net material after recaptures.
 - 🦴 **discovery**: moving a blocker uncovers check or a material-winning threat by an unmoved bishop, rook, or queen. Legal capture/recapture analysis excludes routine equal trades and pawn-only attacks. Uses the first five seconds of [xQc’s fossil clip](https://www.youtube.com/watch?v=knxrshWgEDM). Takes priority over reload.
 - **castle** and **capture**: dedicated configurable triggers, disabled until a sound is assigned in the control room.
-- 😭 **lost_queen**: they take your queen: *NOOOOO*, and 👋 **queen_trade**: *bye, have a great time* / sayonara
+- 🏃 **queen_chase**: *why are you running?* on the second and further consecutive safe queen retreats from new legal lower-piece attacks. The attacking moves still use reload. Capturing the attacker, ordinary queen moves, interrupted pursuits, pins and unchanged threats do not count. No cooldown.
+- 😭 **lost_queen**: *NOOOOO* only when the actual legal queen capture loses material after recaptures. Equal trades and acceptance of the immediately preceding verified Brilliant sacrifice stay quiet.
+- 👋 **queen_trade**: optional *bye, have a great time* / sayonara, disabled by default.
 - 🚪 **king_capture**: the king takes something: *I am the one who knocks*
 - 🍴 **fork**: a knight attacks the king and the queen or a rook at once: *surprise*
 
 ### Clock:
-- 🎵 **opponent_slow**: one waiting clip after **2 seconds in bullet** or **3 seconds in blitz**: Jeopardy, elevator music or snoring. Configure both delays under Game & clock.
+- 💻 **lost_on_time**: Windows shutdown after your confirmed `outoftime` loss. Replaces the ordinary loss clip; opponent flags still use the win pool, and abandonment (`timeout`) uses the ordinary loss pool. Configurable separately. Shutdown is excluded from the default Big blunder pool; explicitly chosen custom pools retain their clips.
+- 🎵 **opponent_slow**: one waiting clip after **3 seconds in bullet** or **5 seconds in blitz**: Jeopardy, elevator music or snoring. Configure both delays under Game & clock.
 - 👨‍🍳 **you_slow**: the same delay on your turn: *let him cook*. Both waiting clips stop as soon as a move arrives.
 - 🤔 Longer games keep the previous timing: Komarov impatience followed by waiting music after 15% of the base time (minimum 55 seconds). Early waiting clips are never interrupted by later impatience lines.
 - 🎷 **time_scramble**: both clocks under 10 seconds: Yakety Sax (only big moments interrupt it)

@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SettingsStore } from '../settings.mjs';
-import { defaultRule } from '../sound-rules.mjs';
+import { defaultRule, EVENTS, eventFor, soundLibrary } from '../sound-rules.mjs';
 import { BOT_DEFAULTS, SOUND_DEFAULTS, soundCategory, soundEnabled } from '../sound-settings.mjs';
 
 test('all shipped sound slots are covered and the four switches are independent', () => {
@@ -26,7 +26,7 @@ test('quality judges your moves, while special moves and game events use indepen
     for (const slot of ['good_move', 'great_move', 'excellent_move', 'brilliant_move', 'blunder_big']) {
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, false), false, slot);
     }
-    for (const slot of ['attack_up', 'discovery', 'fork', 'promotion', 'en_passant', 'opponent_slow', 'you_slow', 'game_start']) {
+    for (const slot of ['attack_up', 'discovery', 'queen_chase', 'fork', 'promotion', 'en_passant', 'opponent_slow', 'you_slow', 'game_start']) {
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, false), true, slot);
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, true), true, slot);
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, false, false, {enabled: true, side: 'you'}), slot.includes('slow') || ['time_scramble','game_start'].includes(slot));
@@ -38,11 +38,19 @@ test('quality judges your moves, while special moves and game events use indepen
     assert.equal(soundEnabled({ ...BOT_DEFAULTS, hand_and_brain: true }, 'blunder_big', true), true);
 });
 
+test('new event defaults reuse the approved clips and keep shutdown out of random blunders', () => {
+    const ids = new Set(soundLibrary().map(clip => clip.id));
+    for (const event of EVENTS) for (const id of event.clips ?? []) assert.equal(ids.has(id), true, `${event.id}: ${id}`);
+    assert.deepEqual(eventFor('lost_on_time').clips, ['blunder_big/windows_xp_shutdown.ogg']);
+    assert.deepEqual(eventFor('queen_chase').clips, ['knight_promotion/why_are_you_running.ogg']);
+    assert.equal(eventFor('blunder_big').clips.includes('blunder_big/windows_xp_shutdown.ogg'), false);
+});
+
 test('confirmed wins and losses follow misc even after an opponent move and in hand-and-brain mode', () => {
     for (const mine of [false, true]) {
         for (const hand_and_brain of [false, true]) {
             const settings = { ...BOT_DEFAULTS, hand_and_brain };
-            for (const slot of ['lost_game', 'won_game']) {
+            for (const slot of ['lost_game', 'won_game', 'lost_on_time']) {
                 assert.equal(soundEnabled(settings, slot, mine, true), true);
                 assert.equal(soundEnabled({ ...settings, misc: false }, slot, mine, true), false);
             }

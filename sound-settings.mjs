@@ -17,7 +17,7 @@ export function soundEnabled(settings, slot, mine = true, gameOver = false, over
 	const category = soundCategory(slot);
 	const event = eventFor(slot);
 	const rule = override ?? defaultRule(slot);
-	const result = gameOver && ['lost_game', 'won_game'].includes(slot);
+	const result = gameOver && ['lost_game', 'won_game', 'lost_on_time'].includes(slot);
 	const sideAllowed = slot === 'komarov' || event?.group === 'game' || result
 		|| (rule.side === 'both' || (mine ? rule.side === 'you' : rule.side === 'opponent'));
     return rule.enabled && sideAllowed && (mine || !['good_moves', 'bad_moves'].includes(category)) && settings[category]

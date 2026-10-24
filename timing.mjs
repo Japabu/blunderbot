@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { atomicJson } from './sound-rules.mjs';
 
-export const TIMING_DEFAULTS = { bullet: 2, blitz: 3 };
+export const TIMING_DEFAULTS = { bullet: 3, blitz: 5 };
 export function validateTiming(value) {
     if (!value || Object.keys(value).length !== 2 || Object.keys(TIMING_DEFAULTS).some(key =>
         typeof value[key] !== 'number' || !Number.isFinite(value[key]) || value[key] < 0.5 || value[key] > 120)) {

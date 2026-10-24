@@ -29,10 +29,12 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     let gameId = 'brain-test', initialFen, playerColor = 'w', clockInitial = 0, exportStatus = 'started', exportWinner;
     const queenAttacked = 'r4k1r/pbp2p2/2p1pp2/6bp/2BqR3/P1NP2N1/1PP2PPP/R2Q2K1 b - - 10 16';
     let exportedMoves;
+    let unavailableGame;
     let playing = true;
     mock.method(globalThis, 'fetch', async input => {
         const url = String(input);
         if (url.includes('/api/users/status')) return Response.json([{ playingId: playing ? gameId : undefined }]);
+        if (unavailableGame && url.includes('/game/export/' + unavailableGame)) return new Response('', { status: 404 });
         if (url.includes('/game/export/')) return Response.json({
             moves: exportedMoves ?? gameMoves, initialFen, variant: initialFen ? 'fromPosition' : 'standard', status: exportStatus, winner: exportWinner, speed: 'blitz', clock: { initial: clockInitial, increment: 0 },
             players: {
@@ -43,40 +45,45 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         throw Error('Unexpected fetch: ' + url);
     });
     const searches = [];
-    let holdNext = false, release;
+    let holdNext = false, holdDeep = false, wantBad = false, qualityTest = false, release;
     mock.method(sf, 'evaluate', async (fen, { brain = false } = {}) => {
         const board = new Chess(fen);
         const moves = board.moves({ verbose: true });
         const selected = moves.find(move => move.lan === 'g1f3') ?? moves.find(move => move.piece === 'p') ?? moves[0];
         searches.push({ fen, brain });
-        if (holdNext) {
+        if (holdNext || (holdDeep && brain)) {
             holdNext = false;
+            holdDeep = false;
             await new Promise(resolve => { release = resolve; });
         }
         // Results reproduced on the Pi for YrMa2KBQ after 16.Re4: depth 8 picks c5,
         // while depths 12, 14 and 16 choose Qd8 to save the attacked queen.
         const bestmove = fen === queenAttacked ? (brain ? 'd4d8' : 'c6c5') : selected?.lan ?? '(none)';
-        return { score: 20, depth: brain ? 12 : 8, bestmove };
+        return { score: qualityTest ? (brain ? 0 : board.turn() === 'b' ? 200 : 0) : 20, depth: brain ? 12 : 8, bestmove };
     });
     const { watchPlayer, stopWatching, requestBrainCue, latestMoveWasMine } = await import('../li.mjs');
     const spoken = [];
     const activity = [];
     const instant = [], deltas = [];
     const losses = [], wins = [];
+    const commentaries = [], lifecycle = [];
     let enabled = true;
     const brain = new HandAndBrain({ enabled: () => enabled, speak: piece => spoken.push(piece) });
     t.after(() => { stopWatching(); hooks.deregister(); mock.restoreAll(); delete globalThis.brainTestSocket; });
     const flush = () => new Promise(setImmediate);
     const callbacks = {
         wantsBrainCue: () => enabled,
+        wantsBadMoves: () => wantBad,
         onGameActivity: active => activity.push(active),
         onPosition: position => brain.setPosition(position),
         onPositionAnalysis: (position, result) => brain.analyzed(position, result),
         onMove: move => brain.moved(move),
         onMoveInstant: move => instant.push(move),
         onMoveDelta: (delta, info) => deltas.push({ ...info, delta }),
-        onGameLoss: () => losses.push({ gameId, brainPosition: brain.position }),
-        onGameWin: () => wins.push({ gameId, brainPosition: brain.position }),
+        onCommentary: name => commentaries.push(name),
+        onGameEnd: () => lifecycle.push('end'),
+        onGameLoss: info => { lifecycle.push('loss'); losses.push({ ...info, gameId, brainPosition: brain.position }); },
+        onGameWin: info => { lifecycle.push('win'); wins.push({ ...info, gameId, brainPosition: brain.position }); },
     };
     await watchPlayer('hand', callbacks);
     await tick(); await flush();
@@ -226,7 +233,8 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
             const winner = ['draw', 'aborted'].includes(ending) ? undefined
                 : isWin ? (color === 'w' ? 'white' : 'black') : opponentColor;
             const result = { winner, status: { name: ending.replace(/^win-/, '') } };
-            if (ending.endsWith('mate')) await emit({ t: 'end' }); // Details can arrive after the game has stopped.
+            const priorDraws = commentaries.filter(name => name === 'draw').length;
+            if (ending.endsWith('mate') || ending === 'draw') await emit({ t: 'end' }); // Details can arrive after the game has stopped.
             await emit({ t: 'endData', d: result });
             await emit({ t: 'end', d: result });
             const isLoss = !['draw', 'aborted'].includes(ending) && !isWin;
@@ -234,6 +242,9 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
             assert.equal(wins.length - beforeWin, isWin ? 1 : 0, `${color} ${ending}: announce a win only once`);
             if (isLoss) assert.equal(losses.at(-1).brainPosition, null, 'cancel piece cues before the loss sound');
             if (isWin) assert.equal(wins.at(-1).brainPosition, null, 'cancel piece cues before the win sound');
+            if (isLoss) assert.equal(losses.at(-1).status, result.status.name, 'retain clock-loss versus abandonment detail');
+            if (isWin) assert.equal(wins.at(-1).status, result.status.name);
+            assert.equal(commentaries.filter(name => name === 'draw').length - priorDraws, ending === 'draw' ? 1 : 0);
         }
     }
 
@@ -273,6 +284,90 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     assert.equal(instant.at(-1).mine, false);
     assert.equal(instant.at(-1).flavor, 'attack_up', 'opponent special moves are detected for independently configured sound rules');
 
+    for (const [id, fen, san] of [
+        ['audit-ZY-Ne4', '3rk3/pp3pp1/2pqpn2/7r/PPBP4/2N2Pp1/2P3P1/R2Q1RK1 w - - 0 19', 'Ne4'],
+        ['audit-ZY-Rxd4', '7Q/pp1k1pp1/2pqp3/8/PPBrP3/6p1/2P3P1/3R1RK1 w - - 4 24', 'Rxd4'],
+        ['audit-qcg-Nc3', 'rnb1kbnr/ppp1pppp/8/3q4/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 3', 'Nc3'],
+        ['audit-qcg-Ng4', '2k4r/ppq2p2/2p1pn2/5p2/2PP4/5R2/PP3Q1P/5R1K b - - 0 26', 'Ng4'],
+    ]) {
+        stopWatching(); gameId = id; initialFen = fen; gameMoves = ''; playerColor = new Chess(fen).turn();
+        await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
+        const b = new Chess(fen), fields = fen.split(' '), ply = (Number(fields[5]) - 1) * 2 + (fields[1] === 'b' ? 2 : 1);
+        const moved = b.move(san);
+        await emit({ t: 'move', d: { fen: b.fen().split(' ')[0], ply, san: moved.san, uci: moved.lan } });
+        assert.equal(instant.at(-1).flavor, 'attack_up', id + ': retain actual meaningful attacks from the audit');
+    }
+
+    stopWatching(); gameId = 'fair-queen-trade'; playerColor = 'w'; gameMoves = '';
+    initialFen = '2r2r1k/1p3ppp/1q1p2b1/p3p3/P1B1P1Pb/1P2Q2P/3N1P2/2R1R1K1 b - - 4 20';
+    await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
+    const tradedBoard = new Chess(initialFen), traded = tradedBoard.move('Qxe3');
+    await emit({ t: 'move', d: { fen: tradedBoard.fen().split(' ')[0], ply: 40, san: traded.san, uci: traded.lan } });
+    assert.notEqual(instant.at(-1).flavor, 'lost_queen', 'an equal queen exchange must not scream that the queen is lost');
+
+    stopWatching(); gameId = 'real-queen-loss'; playerColor = 'w'; gameMoves = '';
+    initialFen = '3r3k/8/8/8/3Q4/8/8/K7 b - - 0 1';
+    await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
+    const lostBoard = new Chess(initialFen), lost = lostBoard.move('Rxd4');
+    await emit({ t: 'move', d: { fen: lostBoard.fen().split(' ')[0], ply: 2, san: lost.san, uci: lost.lan } });
+    assert.equal(instant.at(-1).flavor, 'lost_queen', 'genuine queen loss remains audible on the first live move');
+
+    stopWatching(); gameId = 'queen-running'; playerColor = 'w'; gameMoves = ''; enabled = false;
+    initialFen = '8/k7/1pppp3/8/3Q4/8/8/K7 b - - 0 1';
+    await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
+    const runningBoard = new Chess(initialFen);
+    for (const [i, uci] of ['c6c5', 'd4e4', 'd6d5', 'e4f4', 'e6e5', 'f4g4'].entries()) {
+        const moved = runningBoard.move(uci);
+        await emit({ t: 'move', d: { fen: runningBoard.fen().split(' ')[0], ply: i + 2, san: moved.san, uci: moved.lan } });
+        assert.equal(instant.at(-1).flavor, i % 2 === 0 ? 'attack_up' : i === 1 ? null : 'queen_chase');
+        if (i === 3 || i === 5) assert.equal(deltas.at(-1).flavor, 'queen_chase', 'own retreat follows engine reaction priority');
+    }
+
+    stopWatching(); gameId = 'old-verification'; playerColor = 'w'; initialFen = undefined; gameMoves = 'e4';
+    qualityTest = true; wantBad = true;
+    await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
+    const oldBoard = new Chess(); oldBoard.move('e4');
+    const e5 = oldBoard.move('e5');
+    await emit({ t: 'move', d: { fen: oldBoard.fen().split(' ')[0], ply: 2, san: e5.san, uci: e5.lan } });
+    holdDeep = true;
+    const nf3 = oldBoard.move('Nf3');
+    const verifyingOldGame = emit({ t: 'move', d: { fen: oldBoard.fen().split(' ')[0], ply: 3, san: nf3.san, uci: nf3.lan } });
+    await flush();
+    stopWatching(); gameId = 'new-game-same-ply'; gameMoves = 'e4 e5 Nf3';
+    await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
+    const priorDeltas = deltas.length;
+    release(); await verifyingOldGame; await flush();
+    assert.equal(deltas.length, priorDeltas, 'old deeper verification must not react over a new game with the same ply');
+    qualityTest = false; wantBad = false;
+
+    stopWatching(); gameId = 'finished-at-connect'; gameMoves = 'e4 e5'; exportStatus = 'outoftime'; exportWinner = 'black';
+    const oldSocket = globalThis.brainTestSocket, priorLosses = losses.length;
+    await watchPlayer('hand', callbacks); await tick(); await flush();
+    assert.equal(globalThis.brainTestSocket, oldSocket, 'a completed export must not open a new live socket');
+    assert.equal(losses.length, priorLosses + 1);
+    assert.equal(losses.at(-1).status, 'outoftime');
+    assert.deepEqual(lifecycle.slice(-2), ['end', 'loss'], 'stop game audio before choosing the result sound');
+    await tick(); assert.equal(losses.length, priorLosses + 1);
+    exportStatus = 'started'; exportWinner = undefined;
+
+    stopWatching(); gameId = 'lagged-export-at-reconnect'; gameMoves = 'e4 e5 Nf3';
+    await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
+    await emit({ t: 'resync' });
+    exportedMoves = 'e4'; exportStatus = 'outoftime'; exportWinner = 'black';
+    const beforeReconnectLosses = losses.length, beforeReconnectSocket = globalThis.brainTestSocket;
+    await tick(); await flush();
+    assert.equal(losses.length, beforeReconnectLosses + 1, 'a lagged move export still has an authoritative clock-loss result');
+    assert.equal(losses.at(-1).status, 'outoftime');
+    assert.equal(globalThis.brainTestSocket, beforeReconnectSocket, 'do not reconnect to a game already finished');
+    exportedMoves = undefined; exportStatus = 'started'; exportWinner = undefined;
+
+    stopWatching(); gameId = 'unavailable-old-game'; gameMoves = 'e4 e5';
+    await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
+    unavailableGame = gameId; gameId = 'available-new-game';
+    await tick(); await flush();
+    assert.notEqual(globalThis.brainTestSocket, socket, 'an unavailable old result must not block the new game');
+    unavailableGame = undefined;
+
     stopWatching();
     gameId = 'missing-result'; playerColor = 'w'; initialFen = undefined; gameMoves = 'e4 e5';
     await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
@@ -300,10 +395,10 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         await emit({ t: 'move', d: { fen: timedBoard.fen().split(' ')[0], ply, san: move.san, uci: move.lan } });
     };
     await timedMove('Nf3', 3);
-    mock.timers.tick(2999); assert.deepEqual(moments, []);
+    mock.timers.tick(4999); assert.deepEqual(moments, []);
     mock.timers.tick(1); assert.deepEqual(moments, ['opponent_slow']);
     await timedMove('Nc6', 4);
-    mock.timers.tick(3000); assert.deepEqual(moments, ['opponent_slow', 'you_slow']);
+    mock.timers.tick(5000); assert.deepEqual(moments, ['opponent_slow', 'you_slow']);
     await timedMove('Bc4', 5);
     mock.timers.tick(2000); await timedMove('Bc5', 6);
     mock.timers.tick(1000); assert.equal(moments.length, 2, 'a move cancels the previous waiting timer');

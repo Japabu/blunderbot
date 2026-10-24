@@ -33,7 +33,7 @@ test('live settings and pools survive restart, remain per-server, and reject sta
     const saved = control({ ...snapshot, action: 'save' }, root);
     assert.equal(settings.get('123').dimitri, false, 'a running store sees external edits');
     assert.equal(control({ action: 'snapshot' }, root).timing.blitz, 4);
-    assert.equal(control({ action: 'snapshot', guild: '456' }, root).timing.blitz, 3);
+    assert.equal(control({ action: 'snapshot', guild: '456' }, root).timing.blitz, 5);
     assert.equal(rules.get('123', 'attack_up').side, 'opponent');
     assert.equal(control({ action: 'snapshot', guild: '456' }, root).settings.dimitri, true);
     assert.notEqual(saved.revision, snapshot.revision);
