@@ -45,7 +45,7 @@ test('invalid pools cannot write settings or escape the sound library', t => {
     assert.equal(control({ action: 'snapshot' }, root).settings.dimitri, true);
     assert.throws(() => control({ action: 'audio', id: '../../.env' }, root), /Unknown sound/);
     snapshot.rules.attack_up.clips = [];
-    snapshot.rules.good_move.side = 'both';
+    snapshot.rules.great_move.side = 'both';
     assert.throws(() => control({ ...snapshot, action: 'save' }, root), /your moves only/);
 });
 test('uploaded Opus sounds persist and can be assigned and previewed without changing defaults', t => {

@@ -4,6 +4,7 @@ import { captureInfo, fullFen, higherPieceAttack, isEnPassant, isKnightFork } fr
 import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
 import { GamePosition } from './hand-and-brain.mjs';
+import { verifyBrilliant, verifyGreat } from './brilliant.mjs';
 
 
 async function getGameInfo(gameId, playerName) {
@@ -79,9 +80,9 @@ let cheat = null;
 let callbacks = {};
 // Keep evaluations ordered, and share each position's search with hand-and-brain mode.
 let evalQueue = Promise.resolve();
-const evaluate = (fen, brain = false) => (evalQueue = evalQueue.catch(() => { }).then(async () => {
+const evaluate = (fen, brain = false, multipv) => (evalQueue = evalQueue.catch(() => { }).then(async () => {
     const startedAt = performance.now();
-    const result = await sf.evaluate(fen, { brain });
+    const result = await sf.evaluate(fen, { brain, ...(multipv ? { multipv } : {}) });
     return { ...result, startedAt, finishedAt: performance.now() };
 }));
 
@@ -95,10 +96,12 @@ function setCurrentPosition(snapshot) {
 // Share searches, upgrading shallow commentary analysis when brain mode is enabled mid-turn.
 function analyzePosition(position) {
     const brain = !!callbacks.wantsBrainCue?.() && position.fen.split(' ')[1] === currentPlayerColor;
-    if (!position.analysisPromise || (brain && !position.analysisForBrain)) {
+    const multipv = !brain && callbacks.wantsGreat?.() && position.fen.split(' ')[1] === currentPlayerColor ? 2 : 1;
+    if (!position.analysisPromise || (brain && !position.analysisForBrain) || (multipv === 2 && position.analysisMultiPv !== 2)) {
         position.analysisForBrain = brain;
+        position.analysisMultiPv = multipv;
         position.analysis = null;
-        const pending = evaluate(position.fen, brain).then(result => {
+        const pending = evaluate(position.fen, brain, multipv === 2 ? 2 : undefined).then(result => {
             // Enabling brain mode can replace an in-flight shallow commentary search.
             if (position.analysisPromise === pending) {
                 position.analysis = result;
@@ -417,12 +420,14 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     const attackFlavor = !replayed && higherPieceAttack(
         gamePosition?.snapshots.get(ply - 1)?.fen, tracked?.fen, lastTurn, tracked?.move?.from, tracked?.move?.to);
     const moveFlavor =
-        attackFlavor ? attackFlavor :
+        attackFlavor === 'discovery' ? attackFlavor :
         enPassant ? "en_passant" :
         promotion === "n" ? "knight_promotion" :
         promotion ? "promotion" :
         tracked?.move?.isKingsideCastle() || tracked?.move?.isQueensideCastle() ? 'castle' :
         checkStreak[lastTurn] === 3 ? "check_spam" :
+        flavor === 'fork' ? 'fork' :
+        attackFlavor ? attackFlavor :
         flavor;
     const mate = san?.includes("#");
     if (!replayed) {
@@ -437,14 +442,14 @@ async function handleMessage(gameId, body, receivedAt, socket) {
 
     // Evaluate every position: the score scores the move just played, the best move judges the next one
     const position = currentPosition?.ply === ply ? currentPosition : null;
-    const { score, bestmove, startedAt, finishedAt } = await (position ? analyzePosition(position) : evaluate(tracked?.fen ?? fullFen(fen, turn, uci)));
+    const { score, bestmove, depth, variations, startedAt, finishedAt } = await (position ? analyzePosition(position) : evaluate(tracked?.fen ?? fullFen(fen, turn, uci)));
     if (gameId !== currentGameId || socket !== ws) return;
     console.log(`[timing] ply ${ply} ${lastTurn}: queued ${Math.round(startedAt - receivedAt)} ms, eval ${Math.round(finishedAt - startedAt)} ms, decided at +${Math.round(performance.now() - receivedAt)} ms`);
 
     // Mate scores are ±1e9, clamp them so a mating sequence isn't a million-centipawn swing per move
     const moverScore = clampScore(-score);
     const before = prevPosition?.ply === ply - 1 ? prevPosition : null;
-    prevPosition = { ply, score, bestmove };
+    prevPosition = { ply, score, bestmove, depth, variations };
 
     // The engine adds stalemate (no legal moves without check) and the watched player's good/bad verdict.
     // Checkmate waits for the confirmed result instead of starting a second reaction here.
@@ -453,11 +458,29 @@ async function handleMessage(gameId, body, receivedAt, socket) {
         // Nothing to add: before our time, or the game is over anyway
     } else if (stalemate) {
         if (mine) moment("stalemated");
-    } else if (mine && before) {
-        const moveDelta = moverScore - clampScore(before.score);
+    } else if (mine) {
+        const moveDelta = before ? moverScore - clampScore(before.score) : null;
+        let brilliant = null;
+        let great = null;
+        if (before && (callbacks.wantsBrilliant?.() || callbacks.wantsGreat?.()) && tracked?.fen) {
+            try {
+                const searches = new Map();
+                const options = {
+                    beforeFen: gamePosition?.snapshots.get(ply - 1)?.fen, afterFen: tracked.fen, uci,
+                    analyze: (fen, { multipv } = {}) => {
+                        const key = fen + ':' + (multipv ?? 1);
+                        if (!searches.has(key)) searches.set(key, evaluate(fen, true, multipv));
+                        return searches.get(key);
+                    },
+                    isCurrent: () => gameId === currentGameId && socket === ws && ply === newestPly && !cheat?.finished,
+                };
+                if (callbacks.wantsBrilliant?.()) brilliant = await verifyBrilliant({ ...options, isCurrent: () => options.isCurrent() && !!callbacks.wantsBrilliant?.() });
+                if (!brilliant && callbacks.wantsGreat?.()) great = await verifyGreat({ ...options, baseline: before, isCurrent: () => options.isCurrent() && !!callbacks.wantsGreat?.() });
+            } catch (error) { console.error('Tactical verification failed:', error.message); }
+        }
         console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}, flavor: ${moveFlavor}`);
         if (ply === newestPly && !cheat?.finished) {
-            callbacks.onMoveDelta?.(moveDelta, { before: clampScore(before.score), after: moverScore, thinkTime, flavor: moveFlavor, san, uci, bestmove: before.bestmove });
+            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime, flavor: moveFlavor, san, uci, bestmove: before?.bestmove, brilliant, great });
         }
     }
     if (mine) prevMyScore = moverScore;

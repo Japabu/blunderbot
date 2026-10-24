@@ -4,11 +4,12 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SettingsStore } from '../settings.mjs';
+import { defaultRule } from '../sound-rules.mjs';
 import { BOT_DEFAULTS, SOUND_DEFAULTS, soundCategory, soundEnabled } from '../sound-settings.mjs';
 
 test('all shipped sound slots are covered and the four switches are independent', () => {
 	const expected = {
-		good_moves: ['good_move', 'great_move', 'excellent_move'],
+		good_moves: ['good_move', 'great_move', 'excellent_move', 'brilliant_move'],
 		bad_moves: ['blunder_tiny', 'blunder_small', 'blunder_medium', 'blunder_big', 'blunder_queen', 'misinput', 'threw_win'],
 	};
 	const slots = readdirSync(new URL('../sounds/', import.meta.url), { withFileTypes: true }).filter(entry => entry.isDirectory()).map(entry => entry.name);
@@ -16,16 +17,16 @@ test('all shipped sound slots are covered and the four switches are independent'
 		const category = slot === 'komarov' ? 'dimitri' : Object.keys(expected).find(key => expected[key].includes(slot)) ?? 'misc';
 		assert.equal(soundCategory(slot), category, slot);
 		for (const toggle of Object.keys(SOUND_DEFAULTS)) {
-			assert.equal(soundEnabled({ ...SOUND_DEFAULTS, [toggle]: false }, slot), toggle !== category, `${toggle}/${slot}`);
+			assert.equal(soundEnabled({ ...SOUND_DEFAULTS, [toggle]: false }, slot, true, false, {enabled: true, side: 'both'}), toggle !== category, `${toggle}/${slot}`);
 		}
 	}
 });
 
 test('quality judges your moves, while special moves and game events use independent rules', () => {
-    for (const slot of ['good_move', 'great_move', 'excellent_move', 'blunder_big']) {
+    for (const slot of ['good_move', 'great_move', 'excellent_move', 'brilliant_move', 'blunder_big']) {
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, false), false, slot);
     }
-    for (const slot of ['attack_up', 'discovery', 'fork', 'promotion', 'en_passant', 'time_scramble', 'opponent_slow', 'you_slow', 'game_start']) {
+    for (const slot of ['attack_up', 'discovery', 'fork', 'promotion', 'en_passant', 'opponent_slow', 'you_slow', 'game_start']) {
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, false), true, slot);
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, true), true, slot);
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, false, false, {enabled: true, side: 'you'}), slot.includes('slow') || ['time_scramble','game_start'].includes(slot));
@@ -99,8 +100,16 @@ test('hand-and-brain permits all bad-move effects when enabled and suppresses ot
 		assert.equal(soundEnabled(settings, slot), true, slot);
 		assert.equal(soundEnabled({ ...settings, bad_moves: false }, slot), false, slot);
 	}
-	for (const slot of ['komarov', 'good_move', 'great_move', 'excellent_move', 'attack_up', 'time_scramble', 'sus', 'game_start']) {
+	for (const slot of ['komarov', 'good_move', 'great_move', 'excellent_move', 'brilliant_move', 'attack_up', 'time_scramble', 'sus', 'game_start']) {
 		assert.equal(soundEnabled(settings, slot), false, slot);
-		assert.equal(soundEnabled({ ...settings, hand_and_brain: false }, slot), true, slot);
+		assert.equal(soundEnabled({ ...settings, hand_and_brain: false }, slot), defaultRule(slot).enabled, slot);
 	}
+});
+
+
+test('routine jokes and intrusive clock music are optional rather than default noise', () => {
+    for (const slot of ['capture','castle','king_capture','queen_trade','check_spam','time_scramble']) {
+        assert.equal(soundEnabled(BOT_DEFAULTS, slot), false, slot);
+        assert.equal(soundEnabled(BOT_DEFAULTS, slot, true, false, { enabled: true, side: 'both' }), true, slot);
+    }
 });

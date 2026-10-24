@@ -14,7 +14,9 @@ import { HandAndBrain, PIECE_NAMES } from './hand-and-brain.mjs';
 import { watchVoiceConnection } from './voice.mjs';
 import { InactivityTimer } from './inactivity.mjs';
 import { SoundRules, eventFor, atomicJson } from './sound-rules.mjs';
-import { classifyMove } from './move-quality.mjs';
+import { moveReaction } from './reaction.mjs';
+
+if (process.env.CONTROL_MODE === 'direct') await import('./config-server.mjs');
 
 const settingsStore = new SettingsStore('./data/settings.json', BOT_DEFAULTS);
 let activeGuildId = null;
@@ -36,7 +38,7 @@ const commands = [
 		.setName('config')
 		.setDescription('Show or change saved sound settings and hand-and-brain mode')
 		.addBooleanOption(option => option.setName('dimitri').setDescription('Dimitri Komarov commentary'))
-		.addBooleanOption(option => option.setName('good_moves').setDescription('Good and great move sounds'))
+		.addBooleanOption(option => option.setName('good_moves').setDescription('Great and brilliant move sounds; routine good moves stay quiet'))
 		.addBooleanOption(option => option.setName('bad_moves').setDescription('Blunder, misinput and thrown win sounds'))
 		.addBooleanOption(option => option.setName('misc').setDescription('Captures, results, clocks and all other sounds'))
 		.addBooleanOption(option => option.setName('hand_and_brain').setDescription('Standard chess: the bot names a piece with a strong move; you choose the move')),
@@ -98,6 +100,7 @@ const SOUND_POOLS = Object.fromEntries(readdirSync('./sounds', { withFileTypes: 
 	.filter(entry => entry.isDirectory())
 	.map(entry => [entry.name, readdirSync(`./sounds/${entry.name}`).filter(file => file.endsWith('.ogg'))]));
 const lastPlayed = {};
+let lastReloadAt = -Infinity;
 let nowPlaying = null;
 // Profiling: what was last handed to the player, and when (performance.now() ms)
 let pending = null;
@@ -127,6 +130,7 @@ function play(slot, { gameOver = false, mine = latestMoveWasMine() } = {}) {
 	// A piece cue takes priority over blunder feedback; the next cue can also interrupt a meme clip.
 	if (!gameOver && brainEnabled() && nowPlaying === 'hand_and_brain') return false;
 	if (!enabled(slot, gameOver, mine)) return false;
+	if (slot === 'attack_up' && performance.now() - lastReloadAt < 12_000) return false;
 	const rule = soundRules.get(activeGuildId, slot);
 	const pool = eventFor(slot)?.pool ?? slot;
 	const clips = rule.clips === null ? (SOUND_POOLS[pool] ?? []).map(clip => `${pool}/${clip}`) : rule.clips;
@@ -136,6 +140,7 @@ function play(slot, { gameOver = false, mine = latestMoveWasMine() } = {}) {
 	const clip = choices[Math.floor(Math.random() * choices.length)];
 	lastPlayed[slot] = clip;
 	nowPlaying = slot;
+	if (slot === 'attack_up') lastReloadAt = performance.now();
 	const path = clip.startsWith('custom/') ? `./data/${clip}` : `./sounds/${clip}`;
 	console.log(`Sound: ${slot} → ${clip}`);
 	startPlaying(`${slot}/${clip}`, path);
@@ -182,16 +187,6 @@ function commentary(keyOrSan) {
 	nowPlaying = 'komarov';
 	console.log(`Komarov: ${key} (${clip})`);
 	startPlaying(`komarov/${clip}`, `./commentary/komarov/${clip}`);
-}
-
-function moveSound(moveDelta, { before, after, thinkTime, flavor, bestmove, uci }) {
-	// Let the guaranteed reload finish instead of cutting it off with a fast engine verdict.
-	if (['attack_up', 'discovery'].includes(flavor) && enabled(flavor)) return flavor;
-	const quality = classifyMove({ before, after, thinkTime, bestmove, uci });
-	if (quality?.grade === 'blunder' && enabled(quality.slot)) return quality.slot;
-	// Otherwise what happened on the board (a capture, a fork, ...) beats the engine's opinion
-	if (flavor && enabled(flavor)) return flavor;
-	return quality?.slot;
 }
 
 player.on('error', error => {
@@ -261,6 +256,7 @@ function startSpectating(guild, channelId, username) {
 	if (activeGuildId && activeGuildId !== guild.id) stopSpectating();
 	inactivity.start();
 	brain.reset();
+	lastReloadAt = -Infinity;
 	player.stop();
 	activeGuildId = guild.id;
 	const connection = joinVoiceChannel({
@@ -279,6 +275,8 @@ function startSpectating(guild, channelId, username) {
 	connection.subscribe(player);
 	watchPlayer(username, {
 		wantsBrainCue: brainEnabled,
+		wantsBrilliant: () => enabled('brilliant_move', false, true),
+		wantsGreat: () => enabled('great_move', false, true),
 		onGameActivity: active => inactivity.activity(active),
 		onPosition: position => {
 			brain.setPosition(position);
@@ -291,12 +289,12 @@ function startSpectating(guild, channelId, username) {
 		},
 		// Right away: a board effect (capture, fork, ...) or Komarov announcing the move
 		onMoveInstant: ({ san, flavor, mine }) => {
-			if (!flavor || !play(flavor, { mine })) commentary(san);
+			if (!mine && (!flavor || !play(flavor, { mine }))) commentary(san);
 		},
 		// Once the engine is done: only cut in if the verdict is something other than what's already playing
 		onMoveDelta: (moveDelta, info) => {
-			const slot = moveSound(moveDelta, info);
-			if (slot && slot !== info.flavor) play(slot);
+			const slot = moveReaction(info, slot => enabled(slot, false, true));
+			if (!slot || !play(slot, { mine: true })) commentary(info.san);
 		},
 		onCommentary: commentary,
 		// Moments are named after their sound slot

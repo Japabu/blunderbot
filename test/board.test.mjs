@@ -73,3 +73,25 @@ test('uncovering a line is a discovery, while a direct knight attack uses the gu
         assert.equal(higherPieceAttack(before, board.fen(), move.color, move.from, move.to), expected, san);
     }
 });
+
+test('fossil only announces meaningful discovered tactics, not trades or loose pawns', () => {
+    for (const [fen, san, expected] of [
+        ['7q/7r/7k/8/3N4/8/8/QK6 w - - 0 1', 'Nf3', null],
+        ['7k/6p1/8/8/3N4/8/8/QK6 w - - 0 1', 'Nf3', null],
+        ['7q/8/7k/8/3N4/8/8/QK6 w - - 0 1', 'Nf3', 'discovery'],
+        ['8/8/7k/8/8/8/3N4/K1B5 w - - 0 1', 'Nf3+', 'discovery'],
+    ]) {
+        const board = new Chess(fen), before = board.fen(), move = board.move(san);
+        assert.equal(higherPieceAttack(before, board.fen(), move.color, move.from, move.to), expected, fen);
+    }
+});
+
+test('reload ignores maintained sliding threats and old attacks made legal by escaping check', () => {
+    for (const [fen, san] of [
+        ['k7/8/8/4q3/8/8/K7/4R3 w - - 0 1', 'Re2'],
+        ['r6k/8/4q3/8/8/8/8/K3R3 w - - 0 1', 'Kb1'],
+    ]) {
+        const board = new Chess(fen), before = board.fen(), move = board.move(san);
+        assert.equal(higherPieceAttack(before, board.fen(), move.color, move.from, move.to), null);
+    }
+});
