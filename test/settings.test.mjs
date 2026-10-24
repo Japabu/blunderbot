@@ -43,7 +43,7 @@ test('confirmed wins and losses follow misc even after an opponent move and in h
     }
     assert.equal(soundEnabled(BOT_DEFAULTS, 'lost_game', false), false, 'ordinary opponent moves stay quiet');
     assert.equal(soundEnabled(BOT_DEFAULTS, 'won_game', false), false);
-    for (const slot of ['double_kill', 'blunder_big', 'good_move', 'sus']) {
+    for (const slot of ['attack_up', 'blunder_big', 'good_move', 'sus']) {
         assert.equal(soundEnabled(BOT_DEFAULTS, slot, false, true), false, slot);
     }
 });
@@ -95,7 +95,7 @@ test('hand-and-brain permits all bad-move effects when enabled and suppresses ot
 		assert.equal(soundEnabled(settings, slot), true, slot);
 		assert.equal(soundEnabled({ ...settings, bad_moves: false }, slot), false, slot);
 	}
-	for (const slot of ['komarov', 'good_move', 'great_move', 'fast_good_move', 'double_kill', 'time_scramble', 'sus', 'game_start']) {
+	for (const slot of ['komarov', 'good_move', 'great_move', 'fast_good_move', 'attack_up', 'time_scramble', 'sus', 'game_start']) {
 		assert.equal(soundEnabled(settings, slot), false, slot);
 		assert.equal(soundEnabled({ ...settings, hand_and_brain: false }, slot), true, slot);
 	}

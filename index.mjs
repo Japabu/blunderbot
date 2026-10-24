@@ -200,7 +200,7 @@ function moveSound(moveDelta, { before, after, thinkTime, flavor }) {
 		if (before >= THREW_WIN_BEFORE && after <= THREW_WIN_AFTER) return "threw_win";
 		if (moveDelta <= REAL_BLUNDER) return BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
 	}
-	// Otherwise what happened on the board (a capture streak, a fork, ...) beats the engine's opinion
+	// Otherwise what happened on the board (a capture, a fork, ...) beats the engine's opinion
 	if (flavor && enabled(flavor)) return flavor;
 	if (moveDelta < 0) return BAD_SOUND_EFFECTS.find(([_, delta]) => moveDelta <= delta)?.[0];
 
