@@ -1,14 +1,23 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { readFile, writeFile, mkdtemp, rm } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ffmpeg from 'ffmpeg-static';
+import { createRequire } from 'node:module';
+import { control } from './control-cli.mjs';
+
+const require = createRequire(import.meta.url);
+const ffmpeg = process.env.FFMPEG_PATH || (() => { try { return require('ffmpeg-static'); } catch { return '/usr/bin/ffmpeg'; } })();
 
 const root = dirname(fileURLToPath(import.meta.url));
 const port = Number(process.env.CONTROL_PORT || 8769);
 const origin = `http://127.0.0.1:${port}`;
+const publicOrigin = process.env.CONTROL_PUBLIC_ORIGIN;
+const allowedOrigins = new Set([origin, ...(publicOrigin ? [publicOrigin] : []), ...(process.env.CONTROL_EXTRA_ORIGINS || '').split(',').filter(Boolean)]);
+const allowedHosts = new Set([...allowedOrigins].map(origin => new URL(origin).host));
+const direct = process.env.CONTROL_MODE === 'direct';
 const cache = new Map();
 function run(command, args, input, limit = 20_000_000) {
     return new Promise((resolve, reject) => {
@@ -22,9 +31,16 @@ function run(command, args, input, limit = 20_000_000) {
         child.stdin.on('error', () => {}); child.stdin.end(input);
     });
 }
-async function remote(request) {
+async function requestBot(request) {
+    if (direct) return control(request, root);
     const result = await run('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=12', 'pi', 'docker exec -i blunderbot node control-cli.mjs'], JSON.stringify(request));
     const data = JSON.parse(result); if (data.error) throw Error(data.error); return data;
+}
+let mutations = Promise.resolve();
+function remote(request) {
+    if (!['save', 'upload'].includes(request.action)) return requestBot(request);
+    const result = mutations.catch(() => {}).then(() => requestBot(request));
+    mutations = result; return result;
 }
 async function body(req, limit = 14_000_000) {
     let bytes = 0; const chunks = [];
@@ -38,7 +54,7 @@ function send(res, code, content, type = 'application/json') {
 }
 const server = createServer(async (req, res) => {
     try {
-        if (req.headers.host !== `127.0.0.1:${port}` || (req.headers.origin && req.headers.origin !== origin)) return send(res, 403, { error: 'Local requests only.' });
+        if (!allowedHosts.has(req.headers.host) || (req.headers.origin && !allowedOrigins.has(req.headers.origin))) return send(res, 403, { error: 'This origin is not allowed.' });
         const url = new URL(req.url, origin);
         if (req.method === 'GET' && ['/', '/app.js', '/style.css'].includes(url.pathname)) {
             const name = { '/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css' }[url.pathname];
@@ -53,6 +69,16 @@ const server = createServer(async (req, res) => {
         if (req.method === 'POST' && url.pathname === '/api/save') {
             if (req.headers['content-type'] !== 'application/json') return send(res, 415, { error: 'Expected JSON' });
             const input = JSON.parse((await body(req, 200_000)).toString());
+            const backups = join(root, 'data', 'config-backups');
+            await mkdir(backups, { recursive: true });
+            await writeFile(join(backups, `${Date.now()}-${randomUUID()}.json`), JSON.stringify(input, null, 2));
+            if (input.overwrite) {
+                const latest = await remote({ action: 'snapshot', guild: input.guild });
+                const active = new Set(latest.events.map(event => event.id));
+                input.archivedRules = { ...input.archivedRules, ...Object.fromEntries(Object.entries(input.rules).filter(([id]) => !active.has(id))) };
+                input.rules = Object.fromEntries(latest.events.map(event => [event.id, input.rules[event.id] ?? latest.rules[event.id]]));
+                input.revision = latest.revision;
+            }
             return send(res, 200, await remote({ ...input, action: 'save' }));
         }
         if (req.method === 'POST' && url.pathname === '/api/upload') {
@@ -69,4 +95,4 @@ const server = createServer(async (req, res) => {
         send(res, 404, { error: 'Not found' });
     } catch (error) { let message = error.message; try { message = JSON.parse(message).error ?? message; } catch {} send(res, 400, { error: message.slice(0, 500) }); }
 });
-server.listen(port, '127.0.0.1', () => console.log(`Blunderbot control room: ${origin}`));
+server.listen(port, process.env.CONTROL_BIND || '127.0.0.1', () => console.log(`Blunderbot control room: ${publicOrigin || origin}`));

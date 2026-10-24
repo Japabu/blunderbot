@@ -29,13 +29,27 @@ test('live settings and pools survive restart, remain per-server, and reject sta
     snapshot.rules.attack_up.side = 'opponent';
     snapshot.rules.attack_up.clips = ['attack_up/reload.ogg'];
     snapshot.settings.dimitri = false;
+    snapshot.timing.blitz = 4;
     const saved = control({ ...snapshot, action: 'save' }, root);
     assert.equal(settings.get('123').dimitri, false, 'a running store sees external edits');
+    assert.equal(control({ action: 'snapshot' }, root).timing.blitz, 4);
+    assert.equal(control({ action: 'snapshot', guild: '456' }, root).timing.blitz, 3);
     assert.equal(rules.get('123', 'attack_up').side, 'opponent');
     assert.equal(control({ action: 'snapshot', guild: '456' }, root).settings.dimitri, true);
     assert.notEqual(saved.revision, snapshot.revision);
     assert.throws(() => control({ ...snapshot, action: 'save' }, root), /changed elsewhere/);
     assert.deepEqual(control({ action: 'snapshot' }, root).rules.attack_up.clips, ['attack_up/reload.ogg']);
+});
+test('saving active rules preserves retired custom pools and validates timing before writing', t => {
+    const root = fixture(t), snapshot = control({ action: 'snapshot' }, root);
+    snapshot.archivedRules = { excellent_move: { enabled: true, side: 'you', clips: ['attack_up/reload.ogg'] } };
+    control({ ...snapshot, action: 'save' }, root);
+    const next = control({ action: 'snapshot' }, root);
+    assert.deepEqual(next.archivedRules.excellent_move.clips, ['attack_up/reload.ogg']);
+    next.timing.blitz = 0;
+    next.settings.misc = false;
+    assert.throws(() => control({ ...next, action: 'save' }, root), /Waiting times/);
+    assert.equal(control({ action: 'snapshot' }, root).settings.misc, true);
 });
 test('invalid pools cannot write settings or escape the sound library', t => {
     const root = fixture(t), snapshot = control({ action: 'snapshot' }, root);
@@ -45,7 +59,7 @@ test('invalid pools cannot write settings or escape the sound library', t => {
     assert.equal(control({ action: 'snapshot' }, root).settings.dimitri, true);
     assert.throws(() => control({ action: 'audio', id: '../../.env' }, root), /Unknown sound/);
     snapshot.rules.attack_up.clips = [];
-    snapshot.rules.good_move.side = 'both';
+    snapshot.rules.great_move.side = 'both';
     assert.throws(() => control({ ...snapshot, action: 'save' }, root), /your moves only/);
 });
 test('uploaded Opus sounds persist and can be assigned and previewed without changing defaults', t => {

@@ -26,7 +26,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     mock.method(performance, 'now', () => now);
     mock.method(globalThis, 'setInterval', fn => { tick = fn; return 1; });
     let gameMoves = '';
-    let gameId = 'brain-test', initialFen, playerColor = 'w';
+    let gameId = 'brain-test', initialFen, playerColor = 'w', clockInitial = 0;
     const queenAttacked = 'r4k1r/pbp2p2/2p1pp2/6bp/2BqR3/P1NP2N1/1PP2PPP/R2Q2K1 b - - 10 16';
     let exportedMoves;
     let playing = true;
@@ -34,7 +34,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         const url = String(input);
         if (url.includes('/api/users/status')) return Response.json([{ playingId: playing ? gameId : undefined }]);
         if (url.includes('/game/export/')) return Response.json({
-            moves: exportedMoves ?? gameMoves, initialFen, variant: initialFen ? 'fromPosition' : 'standard', status: 'started', speed: 'blitz', clock: { initial: 0, increment: 0 },
+            moves: exportedMoves ?? gameMoves, initialFen, variant: initialFen ? 'fromPosition' : 'standard', status: 'started', speed: 'blitz', clock: { initial: clockInitial, increment: 0 },
             players: {
                 [playerColor === 'w' ? 'white' : 'black']: { user: { name: 'hand' }, rating: 1500 },
                 [playerColor === 'w' ? 'black' : 'white']: { aiLevel: 3 },
@@ -272,4 +272,26 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     await emit({ t: 'move', d: { fen: opponentBoard.fen().split(' ')[0], ply: 2, san: opponentMove.san, uci: opponentMove.lan } });
     assert.equal(instant.at(-1).mine, false);
     assert.equal(instant.at(-1).flavor, 'attack_up', 'opponent special moves are detected for independently configured sound rules');
+
+    stopWatching();
+    gameId = 'waiting-both-players'; playerColor = 'w'; initialFen = undefined; gameMoves = 'e4 e5'; clockInitial = 180;
+    const moments = [];
+    mock.timers.enable({ apis: ['setTimeout'] });
+    t.after(() => mock.timers.reset());
+    await watchPlayer('hand', { ...callbacks, onMoment: name => moments.push(name) });
+    await tick(); await flush(); socket = globalThis.brainTestSocket;
+    const timedBoard = new Chess(); timedBoard.move('e4'); timedBoard.move('e5');
+    const timedMove = async (san, ply) => {
+        const move = timedBoard.move(san);
+        await emit({ t: 'move', d: { fen: timedBoard.fen().split(' ')[0], ply, san: move.san, uci: move.lan } });
+    };
+    await timedMove('Nf3', 3);
+    mock.timers.tick(2999); assert.deepEqual(moments, []);
+    mock.timers.tick(1); assert.deepEqual(moments, ['opponent_slow']);
+    await timedMove('Nc6', 4);
+    mock.timers.tick(3000); assert.deepEqual(moments, ['opponent_slow', 'you_slow']);
+    await timedMove('Bc4', 5);
+    mock.timers.tick(2000); await timedMove('Bc5', 6);
+    mock.timers.tick(1000); assert.equal(moments.length, 2, 'a move cancels the previous waiting timer');
+    stopWatching(); mock.timers.tick(2000); assert.equal(moments.length, 2, 'stopping cancels all waiting sounds');
 });

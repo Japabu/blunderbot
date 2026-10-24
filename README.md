@@ -17,19 +17,19 @@ BlunderBot is a Discord bot that watches your Lichess games and provides **compl
 
 Every slot is a folder in `sounds/` and a random clip from it plays (never the same one twice in a row), so drop more clips in to add variety. Clips are Ogg Opus, the format Discord streams, and preloaded into memory, so a sound starts within milliseconds instead of waiting for ffmpeg: convert with `npx ffmpeg-static` or any ffmpeg, e.g. `ffmpeg -i clip.mp3 -af loudnorm=I=-12 -c:a libopus -b:a 96k -ar 48000 -ac 2 clip.ogg`.
 
-Board effects (captures, forks, en passant, ...) or Komarov announcing the move play the instant a move arrives. Win/loss reactions wait for Lichess to confirm the result and play once. The engine's verdict comes a few hundred milliseconds later and only cuts in when it has something better to say, like a blunder.
+Your move gets one reaction after analysis: verified brilliant/great, otherwise a mistake, otherwise a meaningful board event. Opponent special moves can react immediately. Normal moves get no sound effect; optional Dimitri commentary follows its own switch. Win/loss reactions wait for Lichess to confirm the result and play once. The engine's verdict comes a few hundred milliseconds later and only cuts in when it has something better to say, like a blunder.
 
 ### Move quality
 
 Moves are graded against the engine evaluation immediately before that move, from the mover's perspective. An opponent's blunder no longer earns a positive reaction by itself. The old comparison against the watched player's previous turn and the fast-good-move category have been removed.
 
-The bands follow [Chess.com's published classifications](https://support.chess.com/en/articles/8572705-how-are-moves-classified-what-is-a-blunder-or-brilliant-etc), using [Lichess's public win-chance conversion](https://lichess.org/page/accuracy), `1 / (1 + exp(-0.00368208 * cp))`. This is a transparent approximation, not Chess.com's private rating-adjusted expected-points model. No extra searches are needed. Great/pivotal and brilliant/sacrifice detection are not implemented; the legacy `great_move` sound pool now serves **Best move**.
+The bands follow [Chess.com's published classifications](https://support.chess.com/en/articles/8572705-how-are-moves-classified-what-is-a-blunder-or-brilliant-etc), using [Lichess's public win-chance conversion](https://lichess.org/page/accuracy), `1 / (1 + exp(-0.00368208 * cp))`. This is a transparent approximation, not Chess.com's private rating-adjusted expected-points model. Normal grading reuses adjacent searches. Optional Great detection requests two lines only on your turns; candidates receive finite depth-12+ confirmation. Brilliant detection additionally checks legal capture/recapture material and every profitable acceptance of the principal offered piece (up to three). It rejects already-easily-winning alternatives and sacrifices that leave you worse than −0.5 or lose over two percentage points. There is no pondering or background engine work. Disabling good_moves or its specific event stops that verification. Normal good, excellent and best moves stay quiet. Great moves must be uniquely strong, and Brilliant moves must contain a sound piece or exchange sacrifice.
 
 | Grade | Winning chances lost | Sound pool |
 | --- | --- | --- |
-| Best | Engine's chosen move, under 2 percentage points lost | great_move |
-| Excellent | Under 2 points | excellent_move (defaults to good_move clips) |
-| Good | 2–5 points | good_move |
+| Brilliant | Verified sound piece/exchange sacrifice | brilliant_move (defaults to great_move clips) |
+| Great | Verified only-good move: next option loses at least 10 points | great_move |
+| Normal best / excellent / good | Under 5 points lost | No sound |
 | Inaccuracy | 5–10 points | blunder_tiny |
 | Mistake | 10–20 points | blunder_small |
 | Blunder | 20–30 points | blunder_medium |
@@ -47,18 +47,18 @@ A blunder played within one second uses `misinput`. Losing at least 10 percentag
 - 💔 **lost_game**: a random loss reaction: *Du bist gut genug*, Emotional Damage, *YOU DIED*, coffin dance, Mario death, or Käsiger Michael. Picks one clip per confirmed loss without repeating the previous clip. Covers checkmate, resignation, running out of time, and abandonment; follows `misc` and also works in hand-and-brain mode. This game-result sound can play after the opponent's final move; special-move sounds follow their separate player rules.
 - 🎺 **stalemated**: you stalemated them: sad trombone, *directed by Robert B. Weide*
 
-### Captures (no engine needed, and they beat the good/bad move sound unless it's a real blunder):
-- 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; king attacks, equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Plays immediately and takes priority over engine feedback; follows `misc` and the usual hand-and-brain sound rules. The control room chooses your moves, opponent moves, or both; default is both.
-- 🦴 **discovery**: moving a blocker uncovers a new legal attack by an unmoved bishop, rook, or queen (including discovered check). Uses the first five seconds of [xQc’s fossil clip](https://www.youtube.com/watch?v=knxrshWgEDM). Takes priority over reload.
+### Board events (bad-move reactions take priority):
+- 🔫 **attack_up**: *Reload Gun Sound* when your move creates a legal attack on a higher-value enemy piece: pawn < knight/bishop < rook < queen. Includes discovered attacks; king attacks, equal-value trades, pawn-on-pawn attacks, pinned attackers, and unchanged old threats do not trigger it. Uses the one-reaction-per-move policy; mistakes and verified exceptional moves take priority; follows `misc` and the usual hand-and-brain sound rules. The control room chooses your moves, opponent moves, or both; default is both. It only considers the piece that moved, excludes unchanged threats, checks net material after recaptures.
+- 🦴 **discovery**: moving a blocker uncovers check or a material-winning threat by an unmoved bishop, rook, or queen. Legal capture/recapture analysis excludes routine equal trades and pawn-only attacks. Uses the first five seconds of [xQc’s fossil clip](https://www.youtube.com/watch?v=knxrshWgEDM). Takes priority over reload.
 - **castle** and **capture**: dedicated configurable triggers, disabled until a sound is assigned in the control room.
 - 😭 **lost_queen**: they take your queen: *NOOOOO*, and 👋 **queen_trade**: *bye, have a great time* / sayonara
 - 🚪 **king_capture**: the king takes something: *I am the one who knocks*
 - 🍴 **fork**: a knight attacks the king and the queen or a rook at once: *surprise*
 
 ### Clock:
-- 🤔 Komarov gets impatient on long thinks (10 s in blitz, 5 s in bullet, 25 s in rapid): *"what to play"*, *"hmm"*, *"thinking now thinking"*, and twice that long in: *"need to make move"*, *"time running"*, *"zeitnot"*
-- 🎵 **opponent_slow**: they've been thinking for 15% of the base time: Jeopardy, elevator music, snoring (stops as soon as they move)
-- 👨‍🍳 **you_slow**: you're the one thinking that long: *let him cook*
+- 🎵 **opponent_slow**: one waiting clip after **2 seconds in bullet** or **3 seconds in blitz**: Jeopardy, elevator music or snoring. Configure both delays under Game & clock.
+- 👨‍🍳 **you_slow**: the same delay on your turn: *let him cook*. Both waiting clips stop as soon as a move arrives.
+- 🤔 Longer games keep the previous timing: Komarov impatience followed by waiting music after 15% of the base time (minimum 55 seconds). Early waiting clips are never interrupted by later impatience lines.
 - 🎷 **time_scramble**: both clocks under 10 seconds: Yakety Sax (only big moments interrupt it)
 - 🤨 **sus**: a Lichess account flag at game start; ongoing suspicion is logged only (see below)
 
@@ -87,15 +87,15 @@ A blunder played within one second uses `misinput`. Losing at least 10 percentag
    # Let the roasting begin
    ```
 
-## Local sound control room
+## Sound control room
 
-Run `npm run config` on the Mac and open **http://127.0.0.1:8769/**. The Mac uses the existing `ssh pi` connection to call `control-cli.mjs` inside the running container. No Pi HTTP ports or Discord credentials are exposed. Keep this process running while configuring the bot.
+Run `npm run config` on the Mac and open **http://127.0.0.1:8769/**. The Mac uses the existing `ssh pi` connection to call `control-cli.mjs` inside the running container. The local bridge exposes no Pi HTTP port or Discord credentials. Keep this process running when using the Mac URL. The Pi also serves the same UI directly on its Tailscale interface at **http://pi.tail17bb6e.ts.net:8769/**; that URL works without the Mac.
 
 Choose a Discord server, toggle triggers, choose which player can trigger a special move, preview any shipped clip at a comfortable volume, and build random sound pools. Upload MP3/WAV/Ogg (maximum 10 MB; first 30 seconds) to convert locally to Discord-ready Opus and store it durably on the Pi. Empty/default-off capture and castle triggers can be activated after choosing clips. Preview volume affects the website only.
 
-**Save to Blunderbot** updates the live per-server settings; no bot restart is needed. The website rejects stale saves if another editor or Discord changed the same server's settings. Unsaved edits are labelled and protected when leaving the page. Uploads add library assets; they become active only after saving the event pool.
+**Save to Blunderbot** updates the live per-server settings; no bot restart is needed. The website rejects stale saves if another editor or Discord changed the same server's settings. Unsaved edits are automatically backed up in the browser and on every save attempt. A stale save retains the draft and offers Apply my edits; Back up edits also downloads a copy. Retired sound pools remain available in the pool picker. Uploads add library assets; they become active only after saving the event pool.
 
-`data/sound-rules.json` stores enabled/player/pool overrides, `data/custom-sounds.json` indexes uploads, and `data/custom/` keeps their audio. All are on the existing persistent volume and survive deployments. The bot watches settings changes so hand-and-brain and mute changes take effect during a game. The local web bridge accepts only loopback requests, checks Host/Origin, validates every sound ID, and never takes a remote shell command from the browser.
+`data/timing.json` stores per-server waiting delays, `data/sound-rules.json` stores enabled/player/pool overrides, `data/custom-sounds.json` indexes uploads, and `data/custom/` keeps their audio. All are on the existing persistent volume and survive deployments. The bot watches settings changes so hand-and-brain and mute changes take effect during a game. The Mac bridge accepts only loopback requests; the Pi publishes its container port only on loopback and its Tailscale IP and accepts the configured tailnet origins. Both check Host/Origin, validates every sound ID, and never takes a remote shell command from the browser.
 
 ## Commands
 
@@ -175,3 +175,9 @@ MIT License - Because even shame should be open source.
 ---
 
 *"In chess, as in life, every move is an opportunity to disappoint yourself publicly."* - BlunderBot, probably
+
+### Sound audit and quiet defaults
+
+Normal best/excellent/good moves, fast-good rewards, routine king captures, queen-exchange jokes, three-check jokes, and scramble music do not play by default. The latter four remain optional in the control room. Castling and ordinary captures remain configurable but need assigned sounds. The 52 shipped clips were decoded and checked for duration and peak level; approved win/loss pools and their variety are retained.
+
+The fossil line requires a newly uncovered check or a legal capture that wins at least a pawn's worth of material after recaptures. A discovered attack on a pawn alone or an equal queen trade does not qualify. Knights forking king and rook/queen use the fork event rather than the generic gun. Your move receives only one selected reaction, so an immediate board meme is not cut off by an engine meme. Game-result audio plays once after the confirmed result.

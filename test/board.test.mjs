@@ -73,3 +73,36 @@ test('uncovering a line is a discovery, while a direct knight attack uses the gu
         assert.equal(higherPieceAttack(before, board.fen(), move.color, move.from, move.to), expected, san);
     }
 });
+
+test('fossil only announces meaningful discovered tactics, not trades or loose pawns', () => {
+    for (const [fen, san, expected] of [
+        ['7q/7r/7k/8/3N4/8/8/QK6 w - - 0 1', 'Nf3', null],
+        ['7k/6p1/8/8/3N4/8/8/QK6 w - - 0 1', 'Nf3', null],
+        ['7q/8/7k/8/3N4/8/8/QK6 w - - 0 1', 'Nf3', 'discovery'],
+        ['8/8/7k/8/8/8/3N4/K1B5 w - - 0 1', 'Nf3+', 'discovery'],
+    ]) {
+        const board = new Chess(fen), before = board.fen(), move = board.move(san);
+        assert.equal(higherPieceAttack(before, board.fen(), move.color, move.from, move.to), expected, fen);
+    }
+});
+
+test('reload ignores maintained sliding threats and old attacks made legal by escaping check', () => {
+    for (const [fen, san] of [
+        ['k7/8/8/4q3/8/8/K7/4R3 w - - 0 1', 'Re2'],
+        ['r6k/8/4q3/8/8/8/8/K3R3 w - - 0 1', 'Kb1'],
+    ]) {
+        const board = new Chess(fen), before = board.fen(), move = board.move(san);
+        assert.equal(higherPieceAttack(before, board.fen(), move.color, move.from, move.to), null);
+    }
+});
+
+test('actual LdTagjRO fossil false positives stay quiet or use the direct-attack sound', () => {
+    for (const [fen, san, expected] of [
+        ['r3kb1r/p2npppp/2p2n2/qp1P3b/2B5/2N2P2/PPP1N1PP/R1BQ1RK1 w kq - 0 10', 'dxc6', 'attack_up'],
+        ['r3kb1r/4pppp/p1P5/2q1n2b/B5n1/2N2P2/PPP1N1PP/R1B1QR1K b kq - 5 14', 'Nxh2', 'attack_up'],
+        ['r3kb1r/4pppp/p1n5/2q4b/B7/2N2P2/PPP1N1PK/R1B1QR2 w kq - 0 16', 'Ng3', null],
+    ]) {
+        const board = new Chess(fen), move = board.move(san);
+        assert.equal(higherPieceAttack(fen, board.fen(), move.color, move.from, move.to), expected, san);
+    }
+});

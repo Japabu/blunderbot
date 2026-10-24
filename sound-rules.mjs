@@ -3,9 +3,8 @@ import { dirname, join } from 'node:path';
 
 const event = (id, name, group, description, pool = id, extra = {}) => ({ id, name, group, description, pool, ...extra });
 export const EVENTS = [
-    event('great_move', 'Best move', 'quality', 'You found the engine’s best move and lost less than 2 percentage points.'),
-    event('excellent_move', 'Excellent move', 'quality', 'Almost best: less than 2 percentage points lost.', 'good_move'),
-    event('good_move', 'Good move', 'quality', 'Between 2 and 5 percentage points lost.'),
+    event('brilliant_move', 'Brilliant move', 'quality', 'A sound piece or exchange sacrifice, verified at depth 12+ against alternatives and accepting the sacrifice.', 'great_move'),
+    event('great_move', 'Great move', 'quality', 'You found the only good option: depth-12+ analysis confirms alternatives lose at least 10 percentage points. Normal moves stay quiet.'),
     event('blunder_tiny', 'Inaccuracy', 'quality', 'Between 5 and 10 percentage points lost.'),
     event('blunder_small', 'Mistake', 'quality', 'Between 10 and 20 percentage points lost.'),
     event('blunder_medium', 'Blunder', 'quality', 'Between 20 and 30 percentage points lost.'),
@@ -13,25 +12,25 @@ export const EVENTS = [
     event('blunder_queen', 'Huge blunder', 'quality', 'At least 45 percentage points lost; not necessarily a queen.'),
     event('misinput', 'Instant blunder', 'quality', 'A blunder played in less than one second.'),
     event('threw_win', 'Thrown win', 'quality', 'From +5 or better to +1 or worse, losing at least 10 percentage points.'),
-    event('attack_up', 'Attack a higher piece', 'special', 'A new legal threat: pawn < knight/bishop < rook < queen. Kings never trigger it.'),
-    event('discovery', 'Discovered attack', 'special', 'Moving one piece uncovers a new attack by a bishop, rook or queen. xQc, first five seconds.'),
+    event('attack_up', 'Attack a higher piece', 'special', 'Every new legal threat by the moved piece against a higher piece. Pawn chases and queen harassment can trigger every move. Existing attacks and king attacks stay quiet.'),
+    event('discovery', 'Discovered tactic', 'special', 'An uncovered check or a material-winning threat after recaptures. Ordinary trades and pawn-only threats stay quiet.'),
     event('castle', 'Castling', 'special', 'Kingside or queenside castling.', null, { enabled: false }),
     event('capture', 'Any capture', 'special', 'An ordinary capture without a more specific event.', null, { enabled: false }),
     event('en_passant', 'En passant', 'special', 'An en passant capture.'),
     event('promotion', 'Promotion', 'special', 'Promoting a pawn to a queen, rook or bishop.'),
     event('knight_promotion', 'Knight promotion', 'special', 'Underpromoting to a knight.'),
-    event('check_spam', 'Three checks in a row', 'special', 'The same player gives check on three successive turns.'),
+    event('check_spam', 'Three checks in a row', 'special', 'Optional joke for three successive checks; off by default because checks can be routine.', 'check_spam', { enabled: false }),
     event('fork', 'Knight fork', 'special', 'A knight attacks the king and a queen or rook.'),
-    event('king_capture', 'King captures', 'special', 'A king captures a piece. This is separate from the gun sound.'),
+    event('king_capture', 'King captures', 'special', 'Optional joke for king captures; off by default because normal endgame captures are routine.', 'king_capture', { enabled: false }),
     event('lost_queen', 'Your queen is captured', 'special', 'The opponent captures your queen.'),
-    event('queen_trade', 'Queen exchange', 'special', 'Both queens are captured on consecutive moves.'),
+    event('queen_trade', 'Queen exchange', 'special', 'Optional reaction to a queen exchange; off by default because a normal trade is not a tactic.', 'queen_trade', { enabled: false }),
     event('game_start', 'Game starts', 'game', 'A new game is found before the second move.'),
     event('won_game', 'You win', 'game', 'A confirmed win, including mate, resignation, timeout or abandonment.'),
     event('lost_game', 'You lose', 'game', 'A confirmed loss, including mate, resignation, timeout or abandonment.'),
     event('stalemated', 'You give stalemate', 'game', 'Your move leaves the opponent with no legal move and no check.'),
-    event('you_slow', 'You take too long', 'game', 'After 15% of the starting time, with a minimum waiting period.'),
-    event('opponent_slow', 'Opponent takes too long', 'game', 'Waiting music while your opponent thinks.'),
-    event('time_scramble', 'Time scramble', 'game', 'Both clocks are below ten seconds, once per game.'),
+    event('you_slow', 'You take too long', 'game', 'One waiting sound per turn, after the delay below. Stops when you move.'),
+    event('opponent_slow', 'Opponent takes too long', 'game', 'One waiting sound per turn, after the same delay. Stops when they move.'),
+    event('time_scramble', 'Time scramble', 'game', 'Optional music when both clocks are below ten seconds; off by default to keep clock pressure quiet.', 'time_scramble', { enabled: false }),
     event('sus', 'Lichess account flag', 'game', 'The opponent has a Lichess terms-of-service flag at game start.'),
 ];
 export const EVENT_IDS = new Set(EVENTS.map(event => event.id));
@@ -85,9 +84,16 @@ export class SoundRules {
     }
     get(guild, id) { this.refresh(); return { ...defaultRule(id), ...this.guilds[guild]?.[id] }; }
     all(guild) { return Object.fromEntries(EVENTS.map(event => [event.id, this.get(guild, event.id)])); }
-    save(guild, rules, library = soundLibrary()) {
+    retired(guild) { this.refresh(); return Object.fromEntries(Object.entries(this.guilds[guild] ?? {}).filter(([id]) => !EVENT_IDS.has(id))); }
+    save(guild, rules, library = soundLibrary(), retired = {}) {
         const clean = validateRules(rules, library);
-        this.refresh(); atomicJson(this.path, { ...this.guilds, [guild]: clean }); this.stamp = null;
+        const ids = new Set(library.map(clip => clip.id));
+        for (const [id, rule] of Object.entries(retired)) {
+            if (EVENT_IDS.has(id) || !/^[a-z_]{1,60}$/.test(id) || typeof rule?.enabled !== 'boolean'
+                || !['you','opponent','both'].includes(rule.side) || (rule.clips !== null && (!Array.isArray(rule.clips)
+                    || rule.clips.length > 50 || rule.clips.some(clip => !ids.has(clip))))) throw Error('Invalid saved pool');
+        }
+        this.refresh(); atomicJson(this.path, { ...this.guilds, [guild]: { ...this.guilds[guild], ...clean, ...retired } }); this.stamp = null;
         return this.all(guild);
     }
 }
