@@ -14,7 +14,7 @@ import { HandAndBrain, PIECE_NAMES } from './hand-and-brain.mjs';
 import { watchVoiceConnection } from './voice.mjs';
 import { InactivityTimer } from './inactivity.mjs';
 import { SoundRules, eventFor, atomicJson } from './sound-rules.mjs';
-import { moveReaction } from './reaction.mjs';
+import { gameResultReaction, moveReaction } from './reaction.mjs';
 import { TimingStore } from './timing.mjs';
 
 if (process.env.CONTROL_MODE === 'direct') await import('./config-server.mjs');
@@ -29,7 +29,7 @@ const brainEnabled = () => settingsStore.get(activeGuildId).hand_and_brain;
 // Waiting music stops as soon as the next move comes in
 const WAITING_SLOTS = new Set(["opponent_slow", "you_slow"]);
 // Time scramble music only gives way to the big moments
-const BIG_SLOTS = new Set(["won_game", "lost_game", "stalemated", "misinput", "threw_win", "blunder_big", "blunder_queen", "lost_queen", "queen_trade"]);
+const BIG_SLOTS = new Set(["won_game", "lost_game", "lost_on_time", "stalemated", "misinput", "threw_win", "blunder_big", "blunder_queen", "lost_queen", "queen_trade"]);
 
 process.on('unhandledRejection', error => {
 	console.error('Unhandled promise rejection:', error);
@@ -134,7 +134,7 @@ function play(slot, { gameOver = false, mine = latestMoveWasMine() } = {}) {
 	if (!enabled(slot, gameOver, mine)) return false;
 	const rule = soundRules.get(activeGuildId, slot);
 	const pool = eventFor(slot)?.pool ?? slot;
-	const clips = rule.clips === null ? (SOUND_POOLS[pool] ?? []).map(clip => `${pool}/${clip}`) : rule.clips;
+	const clips = rule.clips ?? eventFor(slot)?.clips ?? (SOUND_POOLS[pool] ?? []).map(clip => `${pool}/${clip}`);
 	if (!clips.length) return console.error('No sounds for', slot);
 	if (nowPlaying === 'time_scramble' && !BIG_SLOTS.has(slot)) return;
 	const choices = clips.length > 1 ? clips.filter(clip => clip !== lastPlayed[slot]) : clips;
@@ -283,7 +283,7 @@ function startSpectating(guild, channelId, username) {
 		onPosition: position => {
 			lastPosition = position;
 			brain.setPosition(position);
-			if (!position && nowPlaying === 'hand_and_brain') player.stop();
+			if (!position && (nowPlaying === 'hand_and_brain' || WAITING_SLOTS.has(nowPlaying) || nowPlaying === 'time_scramble')) player.stop(true);
 		},
 		onPositionAnalysis: (position, analysis) => brain.analyzed(position, analysis),
 		onMove: move => {
@@ -311,15 +311,19 @@ function startSpectating(guild, channelId, username) {
 		onCheatAlert: (opponent, summary) => {
 			console.log('Cheat alert:', formatReport(opponent, summary));
 		},
-		onGameLoss: () => {
+		onGameLoss: info => {
 			brain.reset();
-			play('lost_game', { gameOver: true });
+			const slot = gameResultReaction({ ...info, result: 'loss' }, slot => enabled(slot, true));
+			if (slot) play(slot, { gameOver: true });
 		},
 		onGameWin: () => {
 			brain.reset();
 			play('won_game', { gameOver: true });
 		},
-		onGameEnd: (opponent, summary) => console.log('Game report:', formatReport(opponent, summary)),
+		onGameEnd: (opponent, summary) => {
+			player.stop(true); // Also stop waiting audio when result sounds are muted or empty.
+			console.log('Game report:', formatReport(opponent, summary));
+		},
 	});
 	requestBrainCue();
 	saveSession({ guildId: guild.id, channelId, username });
