@@ -7,7 +7,7 @@ import { Readable } from 'node:stream';
 import { AudioPlayerStatus, NoSubscriberBehavior, StreamType, createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 import { Client, Events, GatewayIntentBits, MessageFlags, REST, Routes, SlashCommandBuilder } from 'discord.js';
 import { formatReport } from './cheat.mjs';
-import { getCurrentPlayerName, moveReceivedAt, requestBrainCue, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
+import { getCurrentPlayerName, latestMoveWasMine, moveReceivedAt, requestBrainCue, searchPlayers, stopWatching, watchPlayer } from './li.mjs';
 import { SettingsStore } from './settings.mjs';
 import { BOT_DEFAULTS, soundEnabled } from './sound-settings.mjs';
 import { HandAndBrain, PIECE_NAMES } from './hand-and-brain.mjs';
@@ -16,7 +16,7 @@ import { InactivityTimer } from './inactivity.mjs';
 
 const settingsStore = new SettingsStore('./data/settings.json', BOT_DEFAULTS);
 let activeGuildId = null;
-const enabled = slot => soundEnabled(settingsStore.get(activeGuildId), slot);
+const enabled = slot => soundEnabled(settingsStore.get(activeGuildId), slot, latestMoveWasMine());
 const brainEnabled = () => settingsStore.get(activeGuildId).hand_and_brain;
 
 // Each sound slot is a folder in sounds/, and a random clip from it plays
@@ -62,8 +62,7 @@ const commands = [
 		.addBooleanOption(option => option.setName('good_moves').setDescription('Good and great move sounds'))
 		.addBooleanOption(option => option.setName('bad_moves').setDescription('Blunder, misinput and thrown win sounds'))
 		.addBooleanOption(option => option.setName('misc').setDescription('Captures, results, clocks and all other sounds'))
-		.addBooleanOption(option => option.setName('hand_and_brain').setDescription('Standard chess: the bot names a piece with a strong move; you choose the move'))
-		.addBooleanOption(option => option.setName('ponder').setDescription('Hand and brain: think ahead during the opponent’s turn')),
+		.addBooleanOption(option => option.setName('hand_and_brain').setDescription('Standard chess: the bot names a piece with a strong move; you choose the move')),
 	new SlashCommandBuilder()
 		.setName('ping')
 		.setDescription('Replies with Ponggg!'),
@@ -293,7 +292,6 @@ function startSpectating(guild, channelId, username) {
 	connection.subscribe(player);
 	watchPlayer(username, {
 		wantsBrainCue: brainEnabled,
-		wantsPonder: () => settingsStore.get(activeGuildId).ponder,
 		onGameActivity: active => inactivity.activity(active),
 		onPosition: position => {
 			brain.setPosition(position);
@@ -301,12 +299,12 @@ function startSpectating(guild, channelId, username) {
 		},
 		onPositionAnalysis: (position, analysis) => brain.analyzed(position, analysis),
 		onMove: move => {
-			if (brainEnabled() || WAITING_SLOTS.has(nowPlaying)) player.stop();
+			player.stop(true);
 			brain.moved(move);
 		},
 		// Right away: the board-only sound (capture, fork, mate, ...) or Komarov announcing the move
-		onMoveInstant: ({ san, flavor }) => {
-			if (!flavor || !play(flavor)) commentary(san);
+		onMoveInstant: ({ san, flavor, mine }) => {
+			if (!mine || !flavor || !play(flavor)) commentary(san);
 		},
 		// Once the engine is done: only cut in if the verdict is something other than what's already playing
 		onMoveDelta: (moveDelta, info) => {
@@ -322,7 +320,6 @@ function startSpectating(guild, channelId, username) {
 		},
 		onCheatAlert: (opponent, summary) => {
 			console.log('Cheat alert:', formatReport(opponent, summary));
-			play(summary.verdict === 'very sus' ? 'very_sus' : 'sus');
 		},
 		onGameEnd: (opponent, summary) => console.log('Game report:', formatReport(opponent, summary)),
 	});
@@ -375,7 +372,6 @@ async function handleInteraction(interaction) {
 				brain.reset();
 				requestBrainCue();
 			} else if (nowPlaying && nowPlaying !== 'hand_and_brain' && !enabled(nowPlaying)) player.stop();
-			if (previous.ponder !== settings.ponder) requestBrainCue();
 		}
 		await interaction.reply({
 			content: `Settings (saved for this server):\n${Object.entries(settings).map(([key, value]) => `${key}: **${value ? 'on' : 'off'}**`).join('\n')}`

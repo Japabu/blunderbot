@@ -95,13 +95,13 @@ Anything that can be read off the board (captures, forks, en passant, checkmate,
 
 Blunderbot leaves voice after five minutes without an active Lichess game, matching Paddibot. Set `IDLE_TIMEOUT_MINUTES` to change this. Active games, including long thinks, keep it connected. Leaving due to inactivity stops spectating and clears the saved session; use `/lichess` to start again. Unexpected voice disconnections are retried automatically while spectating.
 
+Sound effects react only to your moves. After an opponent move, only Dimitri commentary plays; hand-and-brain piece cues still announce your turn. A new move stops the previous clip, and delayed analysis cannot play a reaction for an older move.
+
 ## Hand and brain
 
 Enable `/config hand_and_brain:true`, then use `/lichess <username>` as usual. If the bot is already watching you, enabling the mode takes effect on the current turn. It announces **pawn, knight, bishop, rook, queen, or king** when it is your turn, and repeats that piece every three seconds until you move. Reminders stop when the position changes, the game ends, or the mode is disabled. You choose a move with that type of piece. Castling counts as a king move, and promotion counts as a pawn move. Moving a different piece gets a spoken “That was the wrong piece”; the bot cannot prevent a move in Lichess.
 
 The piece comes from Stockfish's best move at `HAND_AND_BRAIN_DEPTH` (default 12, never below `STOCKFISH_DEPTH`), checked against the exact legal position. This means there is an engine-preferred move with the named piece; it does not promise that every move with that piece is good, or that a lost position can be saved. The bot never announces the destination or which of two same-type pieces to use. Standard chess and standard-chess starting positions are supported; other variants and out-of-sync positions produce no piece cue. Use this for training where engine assistance is permitted.
-
-Pondering is enabled by default in hand-and-brain mode. During the opponent's turn, the bot predicts a legal reply and thinks ahead on the resulting position. If the reply matches, it reuses analysis that reached at least the configured brain depth; otherwise it searches the actual position. Use `/config ponder:false` to disable it or `/config ponder:true` to enable it. Background searches stop on game end or when the mode is disabled, and expire if the bot stops renewing them.
 
 This mode replaces normal commentary, good-move sounds, and miscellaneous effects with short prerecorded piece cues. You can also hear blunder, misinput, and thrown-win sounds with `/config bad_moves:true`, or mute them with `/config bad_moves:false`. Piece cues take priority over these effects. `/config hand_and_brain:false` restores your full normal sound preferences. The setting is saved per server and survives deployments. Current games, including White's first move, are supported; delayed analysis from an earlier turn is discarded.
 
