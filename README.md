@@ -38,6 +38,10 @@ The bands follow [Chess.com's published classifications](https://support.chess.c
 
 A blunder played within one second uses `misinput`. Losing at least 10 percentage points while going from +5 or better to +1 or worse uses `threw_win` (unless it is an instant blunder). Missing/stale before-position analysis never produces a guessed grade.
 
+Suspected inaccuracies, mistakes and blunders are confirmed with depth-12+ before/after searches before playing a bad sound. Existing deeper searches are reused. Ordinary moves receive no extra grading searches; cancelled or failed confirmation stays silent. Confirmed results are also reconciled from the game export when status polling loses the playing ID or the socket misses result details.
+
+Obvious immediate recaptures do not earn Great, even when all other moves lose material. Brilliant sacrifices and specific board events still have their separate checks.
+
 ### Special Moments:
 - 🔔 **game_start**: Boxing bell, as soon as the bot finds the new game
 - 🌸 **en_passant**: Anime ahh (either player, according to its rule)

@@ -26,7 +26,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     mock.method(performance, 'now', () => now);
     mock.method(globalThis, 'setInterval', fn => { tick = fn; return 1; });
     let gameMoves = '';
-    let gameId = 'brain-test', initialFen, playerColor = 'w', clockInitial = 0;
+    let gameId = 'brain-test', initialFen, playerColor = 'w', clockInitial = 0, exportStatus = 'started', exportWinner;
     const queenAttacked = 'r4k1r/pbp2p2/2p1pp2/6bp/2BqR3/P1NP2N1/1PP2PPP/R2Q2K1 b - - 10 16';
     let exportedMoves;
     let playing = true;
@@ -34,7 +34,7 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         const url = String(input);
         if (url.includes('/api/users/status')) return Response.json([{ playingId: playing ? gameId : undefined }]);
         if (url.includes('/game/export/')) return Response.json({
-            moves: exportedMoves ?? gameMoves, initialFen, variant: initialFen ? 'fromPosition' : 'standard', status: 'started', speed: 'blitz', clock: { initial: clockInitial, increment: 0 },
+            moves: exportedMoves ?? gameMoves, initialFen, variant: initialFen ? 'fromPosition' : 'standard', status: exportStatus, winner: exportWinner, speed: 'blitz', clock: { initial: clockInitial, increment: 0 },
             players: {
                 [playerColor === 'w' ? 'white' : 'black']: { user: { name: 'hand' }, rating: 1500 },
                 [playerColor === 'w' ? 'black' : 'white']: { aiLevel: 3 },
@@ -272,6 +272,20 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     await emit({ t: 'move', d: { fen: opponentBoard.fen().split(' ')[0], ply: 2, san: opponentMove.san, uci: opponentMove.lan } });
     assert.equal(instant.at(-1).mine, false);
     assert.equal(instant.at(-1).flavor, 'attack_up', 'opponent special moves are detected for independently configured sound rules');
+
+    stopWatching();
+    gameId = 'missing-result'; playerColor = 'w'; initialFen = undefined; gameMoves = 'e4 e5';
+    await watchPlayer('hand', callbacks); await tick(); await flush(); socket = globalThis.brainTestSocket;
+    playing = false;
+    await tick(); await flush();
+    assert.equal(socket.readyState, 1, 'a transient missing playingId must not close a live game');
+    const priorWins = wins.length;
+    exportStatus = 'outoftime'; exportWinner = 'white';
+    await tick(); await flush();
+    assert.equal(wins.length, priorWins + 1, 'recover a confirmed timeout win without any endData message');
+    assert.equal(socket.readyState, 3);
+    await tick(); assert.equal(wins.length, priorWins + 1, 'the recovered result plays once');
+    playing = true; exportStatus = 'started'; exportWinner = undefined;
 
     stopWatching();
     gameId = 'waiting-both-players'; playerColor = 'w'; initialFen = undefined; gameMoves = 'e4 e5'; clockInitial = 180;
