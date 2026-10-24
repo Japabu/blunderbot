@@ -21,6 +21,16 @@ test('all shipped sound slots are covered and the four switches are independent'
 	}
 });
 
+test('opponent moves permit only Dimitri commentary, with every sound category enabled', () => {
+    const slots = readdirSync(new URL('../sounds/', import.meta.url), { withFileTypes: true })
+        .filter(entry => entry.isDirectory()).map(entry => entry.name);
+    for (const slot of slots) assert.equal(soundEnabled(BOT_DEFAULTS, slot, false), false, slot);
+    assert.equal(soundEnabled(BOT_DEFAULTS, 'komarov', false), true);
+    assert.equal(soundEnabled({ ...BOT_DEFAULTS, dimitri: false }, 'komarov', false), false);
+    assert.equal(soundEnabled({ ...BOT_DEFAULTS, hand_and_brain: true }, 'blunder_big', false), false);
+    assert.equal(soundEnabled({ ...BOT_DEFAULTS, hand_and_brain: true }, 'blunder_big', true), true);
+});
+
 test('partial settings persist across restart and are isolated per server', () => {
 	const dir = mkdtempSync(join(tmpdir(), 'blunderbot-settings-'));
 	try {
@@ -52,12 +62,9 @@ test('hand-and-brain is off by default and persists independently of sound prefe
 		const file = join(dir, 'settings.json');
 		const store = new SettingsStore(file, BOT_DEFAULTS);
 		assert.equal(store.get('one').hand_and_brain, false);
-		assert.equal(store.get('one').ponder, true);
-		store.update('one', { dimitri: false, misc: false, hand_and_brain: true, ponder: false });
+		store.update('one', { dimitri: false, misc: false, hand_and_brain: true });
 		const resumed = new SettingsStore(file, BOT_DEFAULTS);
 		assert.equal(resumed.get('one').hand_and_brain, true);
-		assert.equal(resumed.get('one').ponder, false);
-		assert.equal(resumed.get('two').ponder, true);
 		assert.equal(resumed.get('two').hand_and_brain, false);
 		resumed.update('one', { hand_and_brain: false });
 		assert.equal(resumed.get('one').dimitri, false);

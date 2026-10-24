@@ -3,7 +3,7 @@ import WebSocket from 'ws';
 import { captureInfo, fullFen, isEnPassant, isKnightFork, isSnipe, pieceCount } from "./board.mjs";
 import { CheatDetector, clampScore, fetchAccount } from "./cheat.mjs";
 import sf from "./sf.mjs";
-import { GamePosition, positionAfterMove } from './hand-and-brain.mjs';
+import { GamePosition } from './hand-and-brain.mjs';
 
 
 async function getGameInfo(gameId, playerName) {
@@ -70,8 +70,6 @@ let lastPositionCheckAt = 0;
 const SOCKET_TIMEOUT_MS = 12000;
 const POSITION_CHECK_MS = 15000;
 
-// A move losing this much hands the watched player something big
-const OPPONENT_BLUNDER = 300;
 // A long think first gets Komarov wondering what to play, then him asking for a move, then waiting music
 // (at this share of the base time, but never before the hurry line had its turn)
 const THINK_SECONDS = initial => initial < 180 ? 5 : initial < 600 ? 10 : 25;
@@ -80,32 +78,6 @@ const SLOW_SHARE = 0.15;
 const SCRAMBLE_SECONDS = 10;
 let cheat = null;
 let callbacks = {};
-let ponderingPosition = null;
-
-function stopPondering() {
-    if (!ponderingPosition) return;
-    ponderingPosition = null;
-    void sf.stopPonder().catch(error => console.error('Stopping ponder failed:', error));
-}
-
-function prepareReply(position, analysis) {
-    if (!callbacks.wantsBrainCue?.() || callbacks.wantsPonder?.() === false
-        || currentPosition !== position || position.fen.split(' ')[1] === currentPlayerColor) return;
-    if (position.ponderPending) return;
-    if (ponderingPosition === position && position.lastPonderAt !== undefined
-        && performance.now() - position.lastPonderAt < 3000) return;
-    const fen = positionAfterMove(position.fen, analysis?.bestmove);
-    if (!fen) return;
-    position.lastPonderAt = performance.now();
-    position.ponderPending = true;
-    ponderingPosition = position;
-    void sf.startPonder(fen).catch(error => {
-        if (ponderingPosition === position) ponderingPosition = null;
-        position.lastPonderAt = undefined;
-        console.error('Starting ponder failed:', error);
-    }).finally(() => { position.ponderPending = false; });
-}
-
 // Keep evaluations ordered, and share each position's search with hand-and-brain mode.
 let evalQueue = Promise.resolve();
 const evaluate = (fen, brain = false) => (evalQueue = evalQueue.catch(() => { }).then(async () => {
@@ -118,7 +90,6 @@ function setCurrentPosition(snapshot) {
     if (gamePosition?.ended || cheat?.finished) snapshot = null;
     if (snapshot && currentPosition?.gameId === currentGameId && currentPosition.ply === snapshot.ply && currentPosition.fen === snapshot.fen) return;
     currentPosition = snapshot ? { gameId: currentGameId, playerColor: currentPlayerColor, fen: snapshot.fen, ply: snapshot.ply } : null;
-    if (!currentPosition) stopPondering();
     callbacks.onPosition?.(currentPosition);
 }
 
@@ -134,7 +105,6 @@ function analyzePosition(position) {
                 position.analysis = result;
                 if (currentPosition === position) {
                     callbacks.onPositionAnalysis?.(position, result);
-                    prepareReply(position, result);
                 }
             }
             return result;
@@ -149,14 +119,7 @@ function analyzePosition(position) {
 
 export function requestBrainCue() {
     const position = currentPosition;
-    if (!callbacks.wantsBrainCue?.() || callbacks.wantsPonder?.() === false || !position) stopPondering();
-    if (!callbacks.wantsBrainCue?.() || !position) return;
-    if (position.fen.split(' ')[1] !== currentPlayerColor) {
-        if (callbacks.wantsPonder?.() === false) return;
-        if (position.analysis) prepareReply(position, position.analysis);
-        else void analyzePosition(position).catch(error => console.error('Ponder prediction failed:', error));
-        return;
-    }
+    if (!callbacks.wantsBrainCue?.() || !position || position.fen.split(' ')[1] !== currentPlayerColor) return;
     callbacks.onPosition?.(position);
     if (position.analysis && position.analysisForBrain) callbacks.onPositionAnalysis?.(position, position.analysis);
     else void analyzePosition(position).catch(error => console.error('Brain analysis failed:', error));
@@ -325,6 +288,10 @@ export function getCurrentPlayerName() {
     return currentPlayerName;
 }
 
+export function latestMoveWasMine() {
+    return !currentGameId || newestPly === 0 || (newestPly % 2 ? 'w' : 'b') === currentPlayerColor;
+}
+
 export async function searchPlayers(term) {
     if (!term || term.length < 3) {
         return [];
@@ -455,7 +422,7 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     const mate = san?.includes("#") ? (mine ? "delivered_mate" : "got_mated") : null;
     if (!replayed) {
         lastMoveReceivedAt = receivedAt;
-        callbacks.onMoveInstant?.({ ply, san, flavor: mate ?? moveFlavor });
+        callbacks.onMoveInstant?.({ ply, san, flavor: mate ?? moveFlavor, mine });
     }
 
     // Replayed old moves only update the board state; the newest one is still evaluated so the next move
@@ -484,9 +451,9 @@ async function handleMessage(gameId, body, receivedAt, socket) {
     } else if (mine && prevMyScore !== null) {
         const moveDelta = moverScore - prevMyScore;
         console.log(`Player ${lastTurn} moved, delta: ${moveDelta}, think time: ${thinkTime?.toFixed(2)}, flavor: ${moveFlavor}`);
-        callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime, flavor: moveFlavor, san });
-    } else if (!mine && !moveFlavor && before && clampScore(before.score) - moverScore >= OPPONENT_BLUNDER) {
-        moment("opponent_blunder");
+        if (ply === newestPly && !cheat?.finished) {
+            callbacks.onMoveDelta?.(moveDelta, { before: before ? clampScore(before.score) : null, after: moverScore, thinkTime, flavor: moveFlavor, san });
+        }
     }
     if (mine) prevMyScore = moverScore;
 

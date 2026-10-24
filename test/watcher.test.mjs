@@ -43,10 +43,6 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         throw Error('Unexpected fetch: ' + url);
     });
     const searches = [];
-    const ponders = [];
-    let ponderStops = 0, ponderEnabled = true;
-    mock.method(sf, 'startPonder', async fen => { ponders.push(fen); return { pondering: true }; });
-    mock.method(sf, 'stopPonder', async () => { ponderStops++; return { pondering: false }; });
     let holdNext = false, release;
     mock.method(sf, 'evaluate', async (fen, { brain = false } = {}) => {
         const board = new Chess(fen);
@@ -62,20 +58,22 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         const bestmove = fen === queenAttacked ? (brain ? 'd4d8' : 'c6c5') : selected?.lan ?? '(none)';
         return { score: 20, depth: brain ? 12 : 8, bestmove };
     });
-    const { watchPlayer, stopWatching, requestBrainCue } = await import('../li.mjs');
+    const { watchPlayer, stopWatching, requestBrainCue, latestMoveWasMine } = await import('../li.mjs');
     const spoken = [];
     const activity = [];
+    const instant = [], deltas = [];
     let enabled = true;
     const brain = new HandAndBrain({ enabled: () => enabled, speak: piece => spoken.push(piece) });
     t.after(() => { stopWatching(); hooks.deregister(); mock.restoreAll(); delete globalThis.brainTestSocket; });
     const flush = () => new Promise(setImmediate);
     const callbacks = {
         wantsBrainCue: () => enabled,
-        wantsPonder: () => ponderEnabled,
         onGameActivity: active => activity.push(active),
         onPosition: position => brain.setPosition(position),
         onPositionAnalysis: (position, result) => brain.analyzed(position, result),
         onMove: move => brain.moved(move),
+        onMoveInstant: move => instant.push(move),
+        onMoveDelta: (delta, info) => deltas.push(info),
     };
     await watchPlayer('hand', callbacks);
     await tick(); await flush();
@@ -96,16 +94,12 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
         if (send) await emit({ t: 'move', d: { fen: board.fen().split(' ')[0], ply, uci: result.lan, san } });
     }
     await move('Nf3');
+    assert.equal(instant.at(-1).mine, true);
+    assert.equal(latestMoveWasMine(), true);
     assert.deepEqual(spoken, ['knight'], 'do not give a cue on the opponent turn');
-    assert.equal(ponders.length, 1, 'prepare a reply while the opponent thinks');
-    const predicted = new Chess(board.fen());
-    predicted.move(board.moves({ verbose: true }).find(move => move.piece === 'p').san);
-    assert.equal(ponders[0], predicted.fen(), 'ponder the exact legal position after the predicted reply');
-    ponderEnabled = false; requestBrainCue(); await flush();
-    assert.equal(ponderStops, 1, 'disabling pondering must stop background work immediately');
-    ponderEnabled = true; requestBrainCue(); await flush();
-    assert.equal(ponders.length, 2, 'enabling mid-turn must prepare a reply');
     await move('Nf6');
+    assert.equal(instant.at(-1).mine, false);
+    assert.equal(latestMoveWasMine(), false);
     assert.equal(spoken.length, 2);
     assert.equal(spoken.at(-1), pieceForBestMove(board.fen(), board.moves({ verbose: true }).find(move => move.piece === 'p').lan));
     await move('Nc3');
@@ -166,21 +160,27 @@ test('the watcher supplies initial, live and resynchronized cues and suppresses 
     socket = globalThis.brainTestSocket;
     assert.ok(brain.piece);
 
-    await move('h3'); // Black to move: no piece cue.
+    holdNext = true;
+    const slowOwn = move('g3');
+    await flush();
+    const fastOpponent = move('g6');
+    const fastOwn = move('h3');
+    const beforeDelayed = deltas.length;
+    release();
+    await Promise.all([slowOwn, fastOpponent, fastOwn]); await flush();
+    assert.deepEqual(deltas.slice(beforeDelayed).map(info => info.san), ['h3'],
+        'late analysis must never play an earlier move reaction over newer moves');
+    assert.ok(brain.position, 'turn tracking must preserve hand-and-brain cues');
     holdNext = true;
     const pendingMove = move('h6');
     await flush();
     assert.equal(typeof release, 'function');
     const beforeEnd = spoken.length;
-    const beforeEndPonders = ponders.length;
-    const stopsBeforeEnd = ponderStops;
     await emit({ t: 'endData', d: { winner: 'white', status: { name: 'resign' } } });
     assert.equal(activity.at(-1), false, 'game end must start the idle countdown');
     release(); await pendingMove; await flush();
     assert.equal(brain.position, null);
     assert.equal(spoken.length, beforeEnd, 'a search completing after game end must stay silent');
-    assert.equal(ponders.length, beforeEndPonders, 'a search completing after game end must not start pondering');
-    assert.ok(ponderStops > stopsBeforeEnd, 'game end cancels outstanding background work');
     playing = false;
     await tick();
     assert.equal(socket.readyState, 3, 'status polling must close the finished game socket');
