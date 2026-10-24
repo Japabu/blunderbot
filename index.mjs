@@ -11,6 +11,7 @@ import { getCurrentPlayerName, moveReceivedAt, requestBrainCue, searchPlayers, s
 import { SettingsStore } from './settings.mjs';
 import { BOT_DEFAULTS, soundEnabled } from './sound-settings.mjs';
 import { HandAndBrain, PIECE_NAMES } from './hand-and-brain.mjs';
+import { watchVoiceConnection } from './voice.mjs';
 
 const settingsStore = new SettingsStore('./data/settings.json', BOT_DEFAULTS);
 let activeGuildId = null;
@@ -264,17 +265,12 @@ function startSpectating(guild, channelId, username) {
 		adapterCreator: guild.voiceAdapterCreator,
 	});
 
-	connection.on('stateChange', (oldState, newState) => {
-		console.log(`Voice connection: ${oldState.status} -> ${newState.status}`);
-	});
-	connection.on('error', error => {
-		console.error('Voice connection error:', error);
-	});
-	// Profiling: round trip to Discord's voice servers
-	const pingLog = setInterval(() => {
-		if (connection.state.status === 'destroyed') return clearInterval(pingLog);
-		console.log(`[timing] voice ping: websocket ${connection.ping.ws ?? '?'} ms, udp ${connection.ping.udp ?? '?'} ms`);
-	}, 60_000);
+	watchVoiceConnection(connection, { onRecovered: () => {
+		// Drop clips queued while disconnected and announce the current position again.
+		player.stop();
+		brain.reset();
+		requestBrainCue();
+	} });
 
 	connection.subscribe(player);
 	watchPlayer(username, {
